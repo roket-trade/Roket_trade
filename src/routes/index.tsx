@@ -2,7 +2,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import logo from "@/assets/roket-logo.png.asset.json";
 import { CandleChart } from "@/components/CandleChart";
 
-export const plans = [
+const plans = [
   { name: "Plan 1", deposit: 60, daily: 1 },
   { name: "Plan 2", deposit: 120, daily: 3 },
   { name: "Plan 3", deposit: 180, daily: 4.5 },
