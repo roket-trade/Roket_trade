@@ -28,7 +28,10 @@ export const Route = createFileRoute("/")({
 const cta = "inline-flex items-center justify-center rounded-lg bg-brand px-6 py-3 font-display font-bold text-primary-foreground shadow-glow transition-transform hover:scale-105";
 
 const money = (n: number) =>
-  `$${n % 1 === 0 ? n.toLocaleString("en-US") : n.toFixed(2)}`;
+  `$${n.toLocaleString("en-US", {
+    minimumFractionDigits: n % 1 === 0 ? 0 : 2,
+    maximumFractionDigits: 2,
+  })}`;
 
 function Check() {
   return (
