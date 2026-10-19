@@ -75,9 +75,9 @@ export function CandleChart() {
       });
 
       // labels anchored to the newest candle when born, then float up and fade
-      const lastC = candles[candles.length - 1];
+      const lastC = candles[candles.length - 1]!;
       for (let i = labels.length - 1; i >= 0; i--) {
-        const L = labels[i];
+        const L = labels[i]!;
         const age = (t - L.born) / 2200;
         if (age > 1) { labels.splice(i, 1); continue; }
         if (!L.x) { L.x = startX + (N - 1) * W + W / 2; L.y = y(lastC.h) - 20; }
