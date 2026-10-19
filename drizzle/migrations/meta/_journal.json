@@ -15,6 +15,13 @@
       "when": 1792404000000,
       "tag": "0001_transactions",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1792405000000,
+      "tag": "0002_profiles",
+      "breakpoints": true
     }
   ]
 }

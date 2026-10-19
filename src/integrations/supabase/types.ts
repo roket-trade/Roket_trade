@@ -47,6 +47,33 @@ export type Database = {
         }
         Relationships: []
       }
+      profiles: {
+        Row: {
+          created_at: string
+          email: string | null
+          full_name: string
+          id: string
+          referral_code: string
+          referred_by: string | null
+        }
+        Insert: {
+          created_at?: string
+          email?: string | null
+          full_name: string
+          id: string
+          referral_code?: string
+          referred_by?: string | null
+        }
+        Update: {
+          created_at?: string
+          email?: string | null
+          full_name?: string
+          id?: string
+          referral_code?: string
+          referred_by?: string | null
+        }
+        Relationships: []
+      }
       transactions: {
         Row: {
           created_at: string
@@ -85,7 +112,10 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      resolve_referral_code: {
+        Args: { code: string }
+        Returns: string | null
+      }
     }
     Enums: {
       [_ in never]: never
