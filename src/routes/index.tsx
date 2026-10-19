@@ -83,7 +83,7 @@ function Index() {
           Every plan runs for 365 days and includes the full feature set.
         </p>
         <div className="mt-14 grid gap-6 sm:grid-cols-2 lg:grid-cols-4 lg:items-stretch">
-          {plans.map((p) => (
+          {plans.map((p, i) => (
             <div
               key={p.name}
               className={`relative flex flex-col rounded-2xl border bg-card p-6 ${
@@ -126,7 +126,7 @@ function Index() {
                 ))}
               </ul>
 
-              <Link to="/signup" className={`${cta} mt-6 w-full`}>Choose Plan</Link>
+              <Link to="/checkout" search={{ plan: String(i + 1) as "1" | "2" | "3" | "4" }} className={`${cta} mt-6 w-full`}>Choose Plan</Link>
             </div>
           ))}
         </div>
