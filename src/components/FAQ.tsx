@@ -1,9 +1,5 @@
-import {
-  Accordion,
-  AccordionContent,
-  AccordionItem,
-  AccordionTrigger,
-} from "@/components/ui/accordion";
+import { useState } from "react";
+import { ChevronDown } from "lucide-react";
 
 const faqs = [
   {
@@ -29,6 +25,8 @@ const faqs = [
 ];
 
 export function FAQ() {
+  const [open, setOpen] = useState<number | null>(0);
+
   return (
     <section className="mx-auto max-w-3xl px-6 py-20">
       <h2 className="text-center text-4xl font-bold">Frequently Asked Questions</h2>
@@ -36,22 +34,38 @@ export function FAQ() {
         The short answers on deposits, withdrawals and terms.
       </p>
 
-      <Accordion type="single" collapsible className="mt-10">
-        {faqs.map((f, i) => (
-          <AccordionItem
-            key={f.q}
-            value={`item-${i}`}
-            className="mb-3 rounded-xl border bg-card px-5"
-          >
-            <AccordionTrigger className="text-base font-semibold hover:no-underline">
-              {f.q}
-            </AccordionTrigger>
-            <AccordionContent className="text-sm leading-relaxed text-muted-foreground">
-              {f.a}
-            </AccordionContent>
-          </AccordionItem>
-        ))}
-      </Accordion>
+      <div className="mt-10">
+        {faqs.map((f, i) => {
+          const isOpen = open === i;
+          return (
+            <div key={f.q} className="mb-3 rounded-xl border bg-card px-5">
+              <button
+                type="button"
+                aria-expanded={isOpen}
+                onClick={() => setOpen(isOpen ? null : i)}
+                className="flex w-full cursor-pointer items-center justify-between gap-4 py-4 text-left text-base font-semibold"
+              >
+                <span>{f.q}</span>
+                <ChevronDown
+                  className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-200 ${
+                    isOpen ? "rotate-180" : ""
+                  }`}
+                />
+              </button>
+
+              <div
+                className={`grid transition-all duration-300 ease-out ${
+                  isOpen ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"
+                }`}
+              >
+                <div className="overflow-hidden">
+                  <p className="pb-4 text-sm leading-relaxed text-muted-foreground">{f.a}</p>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
     </section>
   );
 }
