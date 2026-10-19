@@ -41,7 +41,7 @@ function Index() {
           </p>
           <Link to="/signup" className={`${cta} mt-8`}>Get Started</Link>
         </div>
-        <div className="h-[380px] overflow-hidden rounded-2xl border bg-card p-2 shadow-glow">
+        <div className="chart-glow h-[420px] overflow-hidden rounded-2xl border bg-card p-3">
           <CandleChart />
         </div>
       </section>
@@ -59,7 +59,6 @@ function Index() {
             </div>
           ))}
         </div>
-        <p className="mt-10 text-center text-xs text-muted-foreground">Chart shown is a simulation for illustration only. Trading involves risk.</p>
       </section>
     </div>
   );

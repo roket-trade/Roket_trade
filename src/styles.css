@@ -175,3 +175,10 @@
   }
   h1, h2, h3 { font-family: var(--font-display); }
 }
+
+@utility chart-glow {
+  box-shadow:
+    0 0 0 1px color-mix(in oklab, var(--primary) 25%, transparent),
+    0 0 60px -12px color-mix(in oklab, var(--primary) 45%, transparent),
+    0 0 120px -30px color-mix(in oklab, var(--secondary) 50%, transparent);
+}
