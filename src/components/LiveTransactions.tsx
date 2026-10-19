@@ -45,7 +45,7 @@ const money = (n: number) =>
     maximumFractionDigits: 2,
   })}`;
 
-const pick = <T,>(xs: T[]): T => xs[Math.floor(Math.random() * xs.length)];
+const pick = <T,>(xs: T[]): T => xs[Math.floor(Math.random() * xs.length)]!;
 
 const clock = (d: Date) => d.toLocaleTimeString("en-GB", { hour12: false });
 
