@@ -1,6 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import logo from "@/assets/roket-logo.png.asset.json";
 import { CandleChart } from "@/components/CandleChart";
+import { LiveTransactions } from "@/components/LiveTransactions";
 
 type Plan = { name: string; deposit: number; daily: number; popular?: boolean };
 
@@ -69,6 +70,8 @@ function Index() {
           <CandleChart />
         </div>
       </section>
+
+      <LiveTransactions />
 
       <section id="pricing" className="mx-auto max-w-6xl px-6 py-20">
         <h2 className="text-center text-4xl font-bold">Choose your plan</h2>
