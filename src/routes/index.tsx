@@ -2,7 +2,9 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import logo from "@/assets/roket-logo.png.asset.json";
 import { CandleChart } from "@/components/CandleChart";
 
-const plans = [
+type Plan = { name: string; deposit: number; daily: number; popular?: boolean };
+
+const plans: Plan[] = [
   { name: "Plan 1", deposit: 60, daily: 1 },
   { name: "Plan 2", deposit: 120, daily: 3 },
   { name: "Plan 3", deposit: 180, daily: 4.5, popular: true },
@@ -24,6 +26,23 @@ export const Route = createFileRoute("/")({
 });
 
 const cta = "inline-flex items-center justify-center rounded-lg bg-brand px-6 py-3 font-display font-bold text-primary-foreground shadow-glow transition-transform hover:scale-105";
+
+const money = (n: number) =>
+  `$${n % 1 === 0 ? n.toLocaleString("en-US") : n.toFixed(2)}`;
+
+function Check() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" aria-hidden="true" className="h-4 w-4 shrink-0 text-primary">
+      <path
+        d="M4 10.5l4 4 8-9"
+        stroke="currentColor"
+        strokeWidth="2.2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
 
 function Index() {
   return (
