@@ -15,7 +15,10 @@ const PLANS = {
 type PlanId = keyof typeof PLANS;
 
 const NETWORKS = {
-  BEP20: { label: "BNB Smart Chain (BEP20)", address: "0x35aec7E35F65ea227e49fDd321709D52Ada389E4" },
+  BEP20: {
+    label: "BNB Smart Chain (BEP20)",
+    address: "0x35aec7E35F65ea227e49fDd321709D52Ada389E4",
+  },
   SOL: { label: "Solana", address: "3mjR2gV3MJrudjus9yBuh3EtSMw6Ca5BVFcYiMDa1VjQ" },
 } as const;
 type Net = keyof typeof NETWORKS;
@@ -27,9 +30,15 @@ export const Route = createFileRoute("/checkout")({
   head: () => ({
     meta: [
       { title: "Checkout — Roket" },
-      { name: "description", content: "Complete your Roket plan deposit with BNB Smart Chain or Solana." },
+      {
+        name: "description",
+        content: "Complete your Roket plan deposit with BNB Smart Chain or Solana.",
+      },
       { property: "og:title", content: "Checkout — Roket" },
-      { property: "og:description", content: "Complete your Roket plan deposit with BNB Smart Chain or Solana." },
+      {
+        property: "og:description",
+        content: "Complete your Roket plan deposit with BNB Smart Chain or Solana.",
+      },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary" },
     ],
@@ -37,7 +46,12 @@ export const Route = createFileRoute("/checkout")({
   component: Checkout,
 });
 
-const txSchema = z.string().trim().min(20, "Transaction hash looks too short").max(120, "Transaction hash is too long").regex(/^[A-Za-z0-9]+$/, "Only letters and numbers allowed");
+const txSchema = z
+  .string()
+  .trim()
+  .min(20, "Transaction hash looks too short")
+  .max(120, "Transaction hash is too long")
+  .regex(/^[A-Za-z0-9]+$/, "Only letters and numbers allowed");
 const money = (n: number) => n.toLocaleString("en-US", { style: "currency", currency: "USD" });
 
 function Checkout() {
@@ -55,7 +69,16 @@ function Checkout() {
       await navigator.clipboard.writeText(address);
       toast.success("Address copied to clipboard");
     } catch {
-      toast.error("Couldn't copy — please copy it manually");
+      const field = document.createElement("textarea");
+      field.value = address;
+      field.style.position = "fixed";
+      field.style.opacity = "0";
+      document.body.appendChild(field);
+      field.select();
+      const copied = document.execCommand("copy");
+      document.body.removeChild(field);
+      if (copied) toast.success("Address copied to clipboard");
+      else toast.error("Couldn't copy — please copy it manually");
     }
   };
 
@@ -65,16 +88,25 @@ function Checkout() {
     if (!parsed.success) return setError(parsed.error.issues[0].message);
     setError("");
     setBusy(true);
-    const { error: dbError } = await supabase.from("payments").insert({
+    const payload = {
       plan_name: plan.name,
       deposit_amount: plan.deposit,
       network: net,
       wallet_address: address,
       tx_hash: parsed.data,
-    });
+      status: "pending",
+    };
+    let { error: dbError } = await supabase.from("transactions").insert(payload);
+    if (dbError?.code === "PGRST205") {
+      const fallback = await supabase.from("payments").insert(payload);
+      dbError = fallback.error;
+    }
     setBusy(false);
     if (dbError) {
-      const msg = dbError.code === "23505" ? "This transaction hash was already submitted." : "Something went wrong. Please try again.";
+      const msg =
+        dbError.code === "23505"
+          ? "This transaction hash was already submitted."
+          : "Something went wrong. Please try again.";
       setError(msg);
       toast.error(msg);
       return;
@@ -86,7 +118,9 @@ function Checkout() {
   return (
     <div className="min-h-screen px-4 py-10">
       <div className="mx-auto w-full max-w-xl space-y-6">
-        <Link to="/"><img src={logo.url} alt="Roket" className="mx-auto h-10" /></Link>
+        <Link to="/">
+          <img src={logo.url} alt="Roket" className="mx-auto h-10" />
+        </Link>
 
         <section className="rounded-2xl border bg-card p-6">
           <p className="text-xs uppercase tracking-widest text-muted-foreground">Selected plan</p>
@@ -102,24 +136,40 @@ function Checkout() {
 
         {done ? (
           <section className="rounded-2xl border border-primary bg-card p-8 text-center shadow-glow">
-            <h2 className="font-display text-2xl font-bold">Thank you!</h2>
-            <p className="mt-3">Payment submitted for manual review. Your plan will be activated within 2 hours.</p>
-            <Link to="/" className="mt-6 inline-block rounded-lg bg-brand px-6 py-3 font-display font-bold text-primary-foreground">Back to home</Link>
+            <h2 className="font-display text-2xl font-bold">Payment submitted successfully</h2>
+            <p className="mt-3">
+              Your transaction is pending manual verification. Your plan will be activated once the
+              payment is confirmed.
+            </p>
+            <Link
+              to="/"
+              className="mt-6 inline-block rounded-lg bg-brand px-6 py-3 font-display font-bold text-primary-foreground"
+            >
+              Back to home
+            </Link>
           </section>
         ) : (
           <section className="rounded-2xl border bg-card p-6 shadow-glow">
             <h2 className="font-display text-xl font-bold">Payment method</h2>
             <div className="mt-4 grid grid-cols-2 gap-2 rounded-xl bg-muted p-1" role="tablist">
               {(Object.keys(NETWORKS) as Net[]).map((k) => (
-                <button key={k} type="button" role="tab" aria-selected={net === k} onClick={() => setNet(k)}
-                  className={`rounded-lg px-3 py-2 text-sm font-semibold transition ${net === k ? "bg-brand text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}>
+                <button
+                  key={k}
+                  type="button"
+                  role="tab"
+                  aria-selected={net === k}
+                  onClick={() => setNet(k)}
+                  className={`rounded-lg px-3 py-2 text-sm font-semibold transition ${net === k ? "bg-brand text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}
+                >
                   {NETWORKS[k].label}
                 </button>
               ))}
             </div>
 
             <p className="mt-5 text-sm text-muted-foreground">
-              Send exactly <span className="font-semibold text-foreground">{money(plan.deposit)}</span> via {NETWORKS[net].label} to:
+              Send exactly{" "}
+              <span className="font-semibold text-foreground">{money(plan.deposit)}</span> via{" "}
+              {NETWORKS[net].label} to:
             </p>
             <div className="mt-4 flex justify-center">
               <div className="rounded-xl bg-foreground p-3">
@@ -127,16 +177,35 @@ function Checkout() {
               </div>
             </div>
             <div className="mt-4 flex flex-col gap-2 sm:flex-row">
-              <code className="flex-1 break-all rounded-lg border bg-muted px-3 py-3 text-sm">{address}</code>
-              <button type="button" onClick={copy} className="rounded-lg border border-primary px-4 py-3 text-sm font-semibold text-primary hover:bg-primary/10">Copy Address</button>
+              <code className="flex-1 break-all rounded-lg border bg-muted px-3 py-3 text-sm">
+                {address}
+              </code>
+              <button
+                type="button"
+                onClick={copy}
+                className="rounded-lg border border-primary px-4 py-3 text-sm font-semibold text-primary hover:bg-primary/10"
+              >
+                Copy Address
+              </button>
             </div>
 
             <form onSubmit={submit} className="mt-6 space-y-3">
-              <label htmlFor="tx" className="text-sm font-medium">Transaction Hash (TxID)</label>
-              <input id="tx" value={tx} onChange={(e) => setTx(e.target.value)} maxLength={120} placeholder="Paste your transaction hash"
-                className="w-full rounded-lg border bg-muted px-4 py-3 outline-none focus:border-primary" />
+              <label htmlFor="tx" className="text-sm font-medium">
+                Transaction Hash (TxID)
+              </label>
+              <input
+                id="tx"
+                value={tx}
+                onChange={(e) => setTx(e.target.value)}
+                maxLength={120}
+                placeholder="Paste your transaction hash"
+                className="w-full rounded-lg border bg-muted px-4 py-3 outline-none focus:border-primary"
+              />
               {error && <p className="text-sm text-destructive">{error}</p>}
-              <button disabled={busy} className="w-full rounded-lg bg-brand py-3 font-display font-bold text-primary-foreground disabled:opacity-60">
+              <button
+                disabled={busy}
+                className="w-full rounded-lg bg-brand py-3 font-display font-bold text-primary-foreground disabled:opacity-60"
+              >
                 {busy ? "Submitting…" : "Submit Payment"}
               </button>
             </form>

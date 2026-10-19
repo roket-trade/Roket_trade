@@ -47,6 +47,39 @@ export type Database = {
         }
         Relationships: []
       }
+      transactions: {
+        Row: {
+          created_at: string
+          deposit_amount: number
+          id: string
+          network: string
+          plan_name: string
+          status: string
+          tx_hash: string
+          wallet_address: string
+        }
+        Insert: {
+          created_at?: string
+          deposit_amount: number
+          id?: string
+          network: string
+          plan_name: string
+          status?: string
+          tx_hash: string
+          wallet_address: string
+        }
+        Update: {
+          created_at?: string
+          deposit_amount?: number
+          id?: string
+          network?: string
+          plan_name?: string
+          status?: string
+          tx_hash?: string
+          wallet_address?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
