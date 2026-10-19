@@ -61,10 +61,19 @@ function Signup() {
     try {
       let referredBy: string | null = null;
       if (cleanReferral) {
-        const { data: referrerId } = await supabase.rpc("resolve_referral_code", {
-          code: cleanReferral,
-        });
-        if (typeof referrerId === "string") referredBy = referrerId;
+        const { data: referrerId, error: referralError } = await supabase.rpc(
+          "resolve_referral_code",
+          { code: cleanReferral },
+        );
+        if (!referralError && typeof referrerId === "string") {
+          referredBy = referrerId;
+        } else if (
+          /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cleanReferral)
+        ) {
+          // Allow a referrer's user ID to be used directly when the lookup RPC
+          // has not been deployed yet.
+          referredBy = cleanReferral;
+        }
       }
 
       const { data, error: authError } = await supabase.auth.signUp({
@@ -101,15 +110,28 @@ function Signup() {
       }
 
       if (data.session) {
-        const { error: profileError } = await supabase.from("profiles").upsert(
+        const baseProfile = {
+          id: data.user.id,
+          full_name: cleanName,
+          referred_by: referredBy,
+        };
+
+        let { error: profileError } = await supabase.from("profiles").upsert(
           {
-            id: data.user.id,
-            full_name: cleanName,
+            ...baseProfile,
             email: cleanEmail,
-            referred_by: referredBy,
           },
           { onConflict: "id", ignoreDuplicates: true },
         );
+
+        // Older profile tables may not have the email column yet. Retry with the
+        // columns every version of the table has so signup never gets stuck.
+        if (profileError?.code === "PGRST204") {
+          const retry = await supabase
+            .from("profiles")
+            .upsert(baseProfile, { onConflict: "id", ignoreDuplicates: true });
+          profileError = retry.error;
+        }
 
         if (profileError) {
           setBusy(false);
