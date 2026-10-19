@@ -94,7 +94,7 @@ function Checkout() {
             <h1 className="font-display text-3xl font-bold">{plan.name}</h1>
             <div className="text-right">
               <p className="text-sm text-muted-foreground">Deposit amount</p>
-              <p className="font-display text-2xl font-bold text-gradient-brand">{money(plan.deposit)}</p>
+              <p className="font-display text-2xl font-bold text-primary">{money(plan.deposit)}</p>
             </div>
           </div>
           <p className="mt-3 text-sm text-muted-foreground">{money(plan.daily)} daily · 365 days</p>
@@ -119,7 +119,7 @@ function Checkout() {
             </div>
 
             <p className="mt-5 text-sm text-muted-foreground">
-              Send exactly <span className="font-semibold text-foreground">{money(plan.deposit)}</span> in USDT on {NETWORKS[net].label} to:
+              Send exactly <span className="font-semibold text-foreground">{money(plan.deposit)}</span> via {NETWORKS[net].label} to:
             </p>
             <div className="mt-4 flex justify-center">
               <div className="rounded-xl bg-foreground p-3">
