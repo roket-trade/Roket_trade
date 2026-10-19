@@ -126,7 +126,7 @@ function Index() {
                 ))}
               </ul>
 
-              <Link to="/checkout" search={{ plan: String(i + 1) as "1" | "2" | "3" | "4" }} className={`${cta} mt-6 w-full`}>Choose Plan</Link>
+              <Link to="/checkout" search={{ plan: i + 1 }} className={`${cta} mt-6 w-full`}>Choose Plan</Link>
             </div>
           ))}
         </div>

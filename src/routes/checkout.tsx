@@ -21,9 +21,10 @@ const NETWORKS = {
 type Net = keyof typeof NETWORKS;
 
 export const Route = createFileRoute("/checkout")({
-  validateSearch: (s: Record<string, unknown>): { plan: PlanId } => ({
-    plan: (String(s.plan ?? "1") in PLANS ? String(s.plan ?? "1") : "1") as PlanId,
-  }),
+  validateSearch: (s: Record<string, unknown>): { plan: number } => {
+    const n = Number(String(s["plan"] ?? "1").replace(/"/g, ""));
+    return { plan: n >= 1 && n <= 4 ? Math.floor(n) : 1 };
+  },
   head: () => ({
     meta: [
       { title: "Checkout — Roket" },
@@ -42,7 +43,7 @@ const money = (n: number) => n.toLocaleString("en-US", { style: "currency", curr
 
 function Checkout() {
   const { plan: planId } = Route.useSearch();
-  const plan = PLANS[planId];
+  const plan = PLANS[String(planId) as PlanId];
   const [net, setNet] = useState<Net>("BEP20");
   const [tx, setTx] = useState("");
   const [error, setError] = useState("");
@@ -62,7 +63,7 @@ function Checkout() {
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     const parsed = txSchema.safeParse(tx);
-    if (!parsed.success) return setError(parsed.error.issues[0].message);
+    if (!parsed.success) return setError(parsed.error.issues[0]?.message ?? "Invalid transaction hash");
     setError("");
     setBusy(true);
     const { error: dbError } = await supabase.from("payments").insert({
