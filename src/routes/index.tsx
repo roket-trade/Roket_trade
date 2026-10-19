@@ -2,6 +2,10 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import logo from "@/assets/roket-logo.png.asset.json";
 import { CandleChart } from "@/components/CandleChart";
 import { LiveTransactions } from "@/components/LiveTransactions";
+import { HowItWorks } from "@/components/HowItWorks";
+import { Features } from "@/components/Features";
+import { FAQ } from "@/components/FAQ";
+import { Footer } from "@/components/Footer";
 
 type Plan = { name: string; deposit: number; daily: number; popular?: boolean };
 
@@ -127,6 +131,14 @@ function Index() {
           ))}
         </div>
       </section>
+
+      <HowItWorks />
+
+      <Features />
+
+      <FAQ />
+
+      <Footer />
     </div>
   );
 }
