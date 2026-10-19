@@ -57,7 +57,17 @@ function Index() {
     <div className="min-h-screen">
       <header className="mx-auto flex max-w-6xl items-center justify-between px-6 py-5">
         <img src={logo.url} alt="Roket" className="h-10" />
-        <Link to="/signup" className={cta}>Get Started</Link>
+        <nav className="flex items-center gap-2">
+          <Link
+            to="/login"
+            className="rounded-lg px-4 py-2 text-sm font-semibold text-muted-foreground transition-colors hover:text-foreground"
+          >
+            Log in
+          </Link>
+          <Link to="/signup" className={cta}>
+            Sign Up
+          </Link>
+        </nav>
       </header>
 
       <section className="mx-auto grid max-w-6xl items-center gap-10 px-6 py-12 lg:grid-cols-2">

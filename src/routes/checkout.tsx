@@ -4,6 +4,7 @@ import { QRCodeSVG } from "qrcode.react";
 import { toast } from "sonner";
 import { z } from "zod";
 import logo from "@/assets/roket-logo.png.asset.json";
+import { RequireAuth } from "@/components/RequireAuth";
 import { supabase } from "@/integrations/supabase/client";
 
 const PLANS = {
@@ -116,11 +117,12 @@ function Checkout() {
   };
 
   return (
-    <div className="min-h-screen px-4 py-10">
-      <div className="mx-auto w-full max-w-xl space-y-6">
-        <Link to="/">
-          <img src={logo.url} alt="Roket" className="mx-auto h-10" />
-        </Link>
+    <RequireAuth>
+      <div className="min-h-screen px-4 py-10">
+        <div className="mx-auto w-full max-w-xl space-y-6">
+          <Link to="/">
+            <img src={logo.url} alt="Roket" className="mx-auto h-10" />
+          </Link>
 
         <section className="rounded-2xl border bg-card p-6">
           <p className="text-xs uppercase tracking-widest text-muted-foreground">Selected plan</p>
@@ -213,5 +215,6 @@ function Checkout() {
         )}
       </div>
     </div>
+    </RequireAuth>
   );
 }
