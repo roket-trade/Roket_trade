@@ -5,9 +5,11 @@ import { CandleChart } from "@/components/CandleChart";
 const plans = [
   { name: "Plan 1", deposit: 60, daily: 1 },
   { name: "Plan 2", deposit: 120, daily: 3 },
-  { name: "Plan 3", deposit: 180, daily: 4.5 },
+  { name: "Plan 3", deposit: 180, daily: 4.5, popular: true },
   { name: "Plan 4", deposit: 250, daily: 8 },
 ];
+
+const features = ["Instant Payouts", "24/7 Support", "Auto-Trading"];
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -48,14 +50,54 @@ function Index() {
 
       <section id="pricing" className="mx-auto max-w-6xl px-6 py-20">
         <h2 className="text-center text-4xl font-bold">Choose your plan</h2>
-        <div className="mt-12 grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
-          {plans.map((p, i) => (
-            <div key={p.name} className={`flex flex-col rounded-2xl border bg-card p-6 ${i === 3 ? "border-primary shadow-glow" : ""}`}>
+        <p className="mt-3 text-center text-muted-foreground">
+          Every plan runs for 365 days and includes the full feature set.
+        </p>
+        <div className="mt-14 grid gap-6 sm:grid-cols-2 lg:grid-cols-4 lg:items-stretch">
+          {plans.map((p) => (
+            <div
+              key={p.name}
+              className={`relative flex flex-col rounded-2xl border bg-card p-6 ${
+                p.popular ? "border-primary shadow-glow ring-1 ring-primary/40 lg:-mt-3" : ""
+              }`}
+            >
+              {p.popular && (
+                <span className="absolute -top-3 left-1/2 -translate-x-1/2 rounded-full bg-brand px-3 py-1 text-[11px] font-bold uppercase tracking-wider text-primary-foreground">
+                  Most Popular
+                </span>
+              )}
+
               <h3 className="text-xl font-bold">{p.name}</h3>
-              <p className="mt-4 text-4xl font-bold text-brand">${p.deposit}</p>
-              <p className="text-sm text-muted-foreground">deposit</p>
-              <p className="mt-4 text-lg"><span className="font-bold text-primary">${p.daily}</span> daily</p>
-              <Link to="/signup" className={`${cta} mt-6`}>Get Started</Link>
+
+              <dl className="mt-5 space-y-3 text-sm">
+                <div className="flex items-baseline justify-between gap-3">
+                  <dt className="text-muted-foreground">Deposit</dt>
+                  <dd className="font-bold text-brand">{money(p.deposit)}</dd>
+                </div>
+                <div className="flex items-baseline justify-between gap-3">
+                  <dt className="text-muted-foreground">Daily Profit</dt>
+                  <dd className="font-bold text-primary">{money(p.daily)}</dd>
+                </div>
+                <div className="flex items-baseline justify-between gap-3">
+                  <dt className="text-muted-foreground">Total Profit</dt>
+                  <dd className="font-bold">{money(p.daily * 365)}</dd>
+                </div>
+                <div className="flex items-baseline justify-between gap-3">
+                  <dt className="text-muted-foreground">Duration</dt>
+                  <dd className="font-bold">365 Days</dd>
+                </div>
+              </dl>
+
+              <ul className="mt-5 space-y-2 border-t pt-5 text-sm">
+                {features.map((f) => (
+                  <li key={f} className="flex items-center gap-2">
+                    <Check />
+                    <span>{f}</span>
+                  </li>
+                ))}
+              </ul>
+
+              <Link to="/signup" className={`${cta} mt-6 w-full`}>Choose Plan</Link>
             </div>
           ))}
         </div>
