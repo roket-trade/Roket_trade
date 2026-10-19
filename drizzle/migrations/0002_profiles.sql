@@ -1,3 +1,7 @@
+-- 0002_profiles.sql
+-- Public user profile records, created by the on_auth_user_created trigger on signup.
+-- All statements are idempotent so re-applying the migration is safe.
+
 CREATE TABLE IF NOT EXISTS public.profiles (
   id uuid PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
   full_name text NOT NULL,
@@ -6,6 +10,19 @@ CREATE TABLE IF NOT EXISTS public.profiles (
   referred_by uuid REFERENCES public.profiles(id) ON DELETE SET NULL,
   created_at timestamptz NOT NULL DEFAULT now()
 );
+
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS email text;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS referral_code text;
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS referred_by uuid REFERENCES public.profiles(id) ON DELETE SET NULL;
+
+-- Backfill referral_code for any rows created before this migration.
+UPDATE public.profiles
+SET referral_code = upper(substr(replace(gen_random_uuid()::text, '-', ''), 1, 10))
+WHERE referral_code IS NULL OR btrim(referral_code) = '';
+
+-- Enforce uniqueness on referral_code (some older runs may have left it nullable).
+ALTER TABLE public.profiles ALTER COLUMN referral_code SET NOT NULL;
+ALTER TABLE public.profiles ALTER COLUMN full_name SET NOT NULL;
 
 CREATE INDEX IF NOT EXISTS profiles_referred_by_idx ON public.profiles (referred_by);
 CREATE INDEX IF NOT EXISTS profiles_referral_code_idx ON public.profiles (referral_code);

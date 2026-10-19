@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { toast } from "sonner";
 import { AuthShell } from "@/components/AuthShell";
 import { supabase } from "@/integrations/supabase/client";
 
@@ -57,69 +58,87 @@ function Signup() {
 
     setBusy(true);
 
-    let referredBy: string | null = null;
-    if (cleanReferral) {
-      const { data: referrerId } = await supabase.rpc("resolve_referral_code", {
-        code: cleanReferral,
+    try {
+      let referredBy: string | null = null;
+      if (cleanReferral) {
+        const { data: referrerId } = await supabase.rpc("resolve_referral_code", {
+          code: cleanReferral,
+        });
+        if (typeof referrerId === "string") referredBy = referrerId;
+      }
+
+      const { data, error: authError } = await supabase.auth.signUp({
+        email: cleanEmail,
+        password,
+        options: {
+          data: {
+            full_name: cleanName,
+            referral_code: cleanReferral || null,
+            referred_by: referredBy,
+          },
+        },
       });
-      if (typeof referrerId === "string") referredBy = referrerId;
-    }
 
-    const { data, error: authError } = await supabase.auth.signUp({
-      email: cleanEmail,
-      password,
-      options: {
-        data: {
-          full_name: cleanName,
-          referral_code: cleanReferral || null,
-          referred_by: referredBy,
-        },
-      },
-    });
+      if (authError) {
+        setBusy(false);
+        setError(authError.message);
+        toast.error(authError.message);
+        return;
+      }
 
-    if (authError) {
+      if (!data.user) {
+        setBusy(false);
+        setError("We couldn't create your account. Please try again.");
+        toast.error("We couldn't create your account. Please try again.");
+        return;
+      }
+
+      if (data.user.identities && data.user.identities.length === 0) {
+        setBusy(false);
+        setError("An account with this email already exists. Try logging in.");
+        toast.error("An account with this email already exists. Try logging in.");
+        return;
+      }
+
+      if (data.session) {
+        const { error: profileError } = await supabase.from("profiles").upsert(
+          {
+            id: data.user.id,
+            full_name: cleanName,
+            email: cleanEmail,
+            referred_by: referredBy,
+          },
+          { onConflict: "id", ignoreDuplicates: true },
+        );
+
+        if (profileError) {
+          setBusy(false);
+          setError(profileError.message);
+          toast.error(profileError.message);
+          return;
+        }
+
+        setBusy(false);
+        toast.success("Account created! Redirecting to your dashboard.");
+        navigate({ to: "/dashboard", replace: true });
+        return;
+      }
+
       setBusy(false);
-      setError(authError.message);
-      return;
-    }
-
-    if (!data.user) {
+      setNotice("Account created. Check your email to confirm your address, then log in.");
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "Something went wrong. Please try again.";
       setBusy(false);
-      setError("We couldn't create your account. Please try again.");
-      return;
+      setError(message);
+      toast.error(message);
     }
-
-    if (data.user.identities && data.user.identities.length === 0) {
-      setBusy(false);
-      setError("An account with this email already exists. Try logging in.");
-      return;
-    }
-
-    if (data.session) {
-      await supabase.from("profiles").upsert(
-        {
-          id: data.user.id,
-          full_name: cleanName,
-          email: cleanEmail,
-          referred_by: referredBy,
-        },
-        { onConflict: "id", ignoreDuplicates: true },
-      );
-      setBusy(false);
-      navigate({ to: "/dashboard", replace: true });
-      return;
-    }
-
-    setBusy(false);
-    setNotice("Account created. Check your email to confirm your address, then log in.");
   };
 
   return (
     <AuthShell>
       <div className="text-center">
-        <p className="text-xs font-semibold uppercase tracking-[0.25em] text-primary">
-          Join Roket
-        </p>
+        <p className="text-xs font-semibold uppercase tracking-[0.25em] text-primary">Join Roket</p>
         <h1 className="mt-2 font-display text-3xl font-bold">Create your account</h1>
         <p className="mt-2 text-sm text-muted-foreground">
           Start trading in minutes. Your account is free to create.
