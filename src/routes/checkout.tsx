@@ -92,24 +92,58 @@ function Checkout() {
     setBusy(true);
 
     try {
+      const { data: userData, error: userError } = await supabase.auth.getUser();
+      if (userError) {
+        console.error("[checkout] getUser failed:", userError);
+        const msg = userError.message || "Not authenticated. Please log in again.";
+        setError(msg);
+        toast.error(msg);
+        return;
+      }
+      const userId = userData.user?.id;
+      if (!userId) {
+        const msg = "Not authenticated. Please log in again.";
+        setError(msg);
+        toast.error(msg);
+        return;
+      }
+
+      const amount = parseFloat(String(plan.deposit));
       const payload = {
+        user_id: userId,
+        type: "deposit",
         plan_name: plan.name,
-        deposit_amount: plan.deposit,
+        amount,
+        deposit_amount: amount,
         network: net,
         wallet_address: address,
         tx_hash: parsed.data,
         status: "pending",
       };
-      let { error: dbError } = await supabase.from("transactions").insert(payload);
+      if (!Number.isFinite(payload.amount) || !Number.isFinite(payload.deposit_amount)) {
+        const msg = "Invalid plan amount. Please reselect your plan.";
+        setError(msg);
+        toast.error(msg);
+        return;
+      }
+      let { error: dbError } = await supabase
+        .from("transactions")
+        .insert(payload, { defaultToNull: false });
       if (dbError?.code === "PGRST205") {
-        const fallback = await supabase.from("payments").insert(payload);
+        const fallback = await supabase.from("payments").insert(payload, { defaultToNull: false });
         dbError = fallback.error;
       }
       if (dbError) {
+        console.error("[checkout] insert failed:", {
+          code: dbError.code,
+          message: dbError.message,
+          details: dbError.details,
+          hint: dbError.hint,
+        });
         const msg =
           dbError.code === "23505"
             ? "This transaction hash was already submitted."
-            : "Something went wrong. Please try again.";
+            : dbError.message || `Insert failed (${dbError.code ?? "unknown"}).`;
         setError(msg);
         toast.error(msg);
         return;
@@ -117,8 +151,11 @@ function Checkout() {
       setDone(true);
       toast.success("Payment submitted");
     } catch (err) {
+      console.error("[checkout] submit failed:", err);
       const message =
-        err instanceof Error ? err.message : "Something went wrong. Please try again.";
+        err instanceof Error && err.message
+          ? err.message
+          : "Something went wrong. Please try again.";
       setError(message);
       toast.error(message);
     } finally {

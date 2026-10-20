@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 
-type Action = "Deposit" | "Withdrawal" | "Plan Upgraded";
+type Action = "Deposit" | "Withdrawal";
 
 type Tx = {
   id: number;
@@ -10,7 +10,7 @@ type Tx = {
   time: string;
 };
 
-const MAX_ROWS = 6;
+const MAX_ROWS = 5;
 
 const names = [
   "John D.",
@@ -25,18 +25,16 @@ const names = [
   "Lena S.",
 ];
 
-const actions: Action[] = ["Deposit", "Withdrawal", "Plan Upgraded"];
+const actions: Action[] = ["Deposit", "Withdrawal"];
 
 const amounts: Record<Action, number[]> = {
-  Deposit: [60, 120, 180, 250, 500, 8.5, 45],
-  Withdrawal: [8.5, 25, 60, 120, 300],
-  "Plan Upgraded": [60, 120, 180, 250],
+  Deposit: [60, 120, 180, 250],
+  Withdrawal: [8.5, 25, 60, 120],
 };
 
 const look: Record<Action, { text: string; chip: string; sign: string }> = {
   Deposit: { text: "text-primary", chip: "bg-primary/10 text-primary", sign: "+" },
   Withdrawal: { text: "text-destructive", chip: "bg-destructive/10 text-destructive", sign: "−" },
-  "Plan Upgraded": { text: "text-secondary", chip: "bg-secondary/10 text-secondary", sign: "" },
 };
 
 const money = (n: number) =>
@@ -92,12 +90,7 @@ function Icon({ action }: { action: Action }) {
     );
   }
 
-  return (
-    <svg {...common}>
-      <path d="M4 13l4-4 3 3 5-6" />
-      <path d="M12 6h4v4" />
-    </svg>
-  );
+  return null;
 }
 
 export function LiveTransactions() {

@@ -57,13 +57,11 @@ function createSupabaseFetch(supabaseUrl: string, supabaseKey: string): typeof f
 function createSupabaseClient() {
   // Use import.meta.env for client-side (Vite build-time replacement)
   // Fall back to process.env for SSR (server-side rendering)
-  const SUPABASE_URL = import.meta.env["VITE_SUPABASE_URL"] || process.env["SUPABASE_URL"];
-  // The project publishes the public key as VITE_SUPABASE_ANON_KEY (newer Supabase
-  // projects) or VITE_SUPABASE_PUBLISHABLE_KEY (older Lovable projects). Both are
-  // public client-side keys — never the secret role key.
+  const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || process.env["SUPABASE_URL"];
+  // Public client key: VITE_SUPABASE_ANON_KEY (anon JWT or sb_publishable_…).
   const SUPABASE_ANON_KEY =
-    import.meta.env["VITE_SUPABASE_ANON_KEY"] ||
-    import.meta.env["VITE_SUPABASE_PUBLISHABLE_KEY"] ||
+    import.meta.env.VITE_SUPABASE_ANON_KEY ||
+    import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ||
     process.env["SUPABASE_PUBLISHABLE_KEY"];
 
   if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {

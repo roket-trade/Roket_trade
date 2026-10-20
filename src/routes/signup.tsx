@@ -89,21 +89,18 @@ function Signup() {
       });
 
       if (authError) {
-        setBusy(false);
         setError(authError.message);
         toast.error(authError.message);
         return;
       }
 
       if (!data.user) {
-        setBusy(false);
         setError("We couldn't create your account. Please try again.");
         toast.error("We couldn't create your account. Please try again.");
         return;
       }
 
       if (data.user.identities && data.user.identities.length === 0) {
-        setBusy(false);
         setError("An account with this email already exists. Try logging in.");
         toast.error("An account with this email already exists. Try logging in.");
         return;
@@ -134,26 +131,24 @@ function Signup() {
         }
 
         if (profileError) {
-          setBusy(false);
           setError(profileError.message);
           toast.error(profileError.message);
           return;
         }
 
-        setBusy(false);
         toast.success("Account created! Redirecting to your dashboard.");
         navigate({ to: "/dashboard", replace: true });
         return;
       }
 
-      setBusy(false);
       setNotice("Account created. Check your email to confirm your address, then log in.");
     } catch (err) {
       const message =
         err instanceof Error ? err.message : "Something went wrong. Please try again.";
-      setBusy(false);
       setError(message);
       toast.error(message);
+    } finally {
+      setBusy(false);
     }
   };
 

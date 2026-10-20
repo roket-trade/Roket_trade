@@ -31,3 +31,6 @@ dist-ssr
 *.sln
 *.sw?
 .ideavo/project
+
+# AutoClaw KDream data
+.autoclaw/

@@ -23,6 +23,7 @@ export type Database = {
           plan_name: string
           status: string
           tx_hash: string
+          user_id: string | null
           wallet_address: string
         }
         Insert: {
@@ -33,6 +34,7 @@ export type Database = {
           plan_name: string
           status?: string
           tx_hash: string
+          user_id?: string | null
           wallet_address: string
         }
         Update: {
@@ -43,67 +45,98 @@ export type Database = {
           plan_name?: string
           status?: string
           tx_hash?: string
+          user_id?: string | null
           wallet_address?: string
         }
         Relationships: []
       }
       profiles: {
         Row: {
+          address: string | null
           created_at: string
           email: string | null
+          extra_balance: number | null
           full_name: string
           id: string
+          id_card_url: string | null
+          is_admin: boolean
+          kyc_status: string | null
+          main_balance: number | null
           referral_code: string
           referred_by: string | null
+          last_withdraw_at: string | null
         }
         Insert: {
+          address?: string | null
           created_at?: string
           email?: string | null
+          extra_balance?: number | null
           full_name: string
           id: string
+          id_card_url?: string | null
+          is_admin?: boolean
+          kyc_status?: string | null
+          main_balance?: number | null
           referral_code?: string
           referred_by?: string | null
+          last_withdraw_at?: string | null
         }
         Update: {
+          address?: string | null
           created_at?: string
           email?: string | null
+          extra_balance?: number | null
           full_name?: string
           id?: string
+          id_card_url?: string | null
+          is_admin?: boolean
+          kyc_status?: string | null
+          main_balance?: number | null
           referral_code?: string
           referred_by?: string | null
+          last_withdraw_at?: string | null
         }
         Relationships: []
       }
       transactions: {
         Row: {
+          amount: number
           created_at: string
-          deposit_amount: number
+          deposit_amount: number | null
           id: string
-          network: string
-          plan_name: string
+          network: string | null
+          plan_name: string | null
           status: string
-          tx_hash: string
-          wallet_address: string
+          tx_hash: string | null
+          type: string
+          user_id: string | null
+          wallet_address: string | null
         }
         Insert: {
+          amount: number
           created_at?: string
-          deposit_amount: number
+          deposit_amount?: number | null
           id?: string
-          network: string
-          plan_name: string
+          network?: string | null
+          plan_name?: string | null
           status?: string
-          tx_hash: string
-          wallet_address: string
+          tx_hash?: string | null
+          type: string
+          user_id?: string | null
+          wallet_address?: string | null
         }
         Update: {
+          amount?: number
           created_at?: string
-          deposit_amount?: number
+          deposit_amount?: number | null
           id?: string
-          network?: string
-          plan_name?: string
+          network?: string | null
+          plan_name?: string | null
           status?: string
-          tx_hash?: string
-          wallet_address?: string
+          tx_hash?: string | null
+          type?: string
+          user_id?: string | null
+          wallet_address?: string | null
         }
         Relationships: []
       }

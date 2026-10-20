@@ -1,46 +1,23 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 import { useNavigate, useRouterState } from "@tanstack/react-router";
 import logo from "@/assets/roket-logo.png.asset.json";
-import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/components/AuthProvider";
 
 export function RequireAuth({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
   const location = useRouterState({ select: (state) => state.location });
-  const [authenticated, setAuthenticated] = useState(false);
+  const { user, loading } = useAuth();
 
   useEffect(() => {
-    let active = true;
-
-    const redirectToLogin = () => {
-      if (!active) return;
-      navigate({
-        to: "/login",
-        search: { redirect: `${location.pathname}${location.searchStr}` },
-        replace: true,
-      });
-    };
-
-    supabase.auth.getSession().then(({ data }) => {
-      if (!active) return;
-      if (!data.session) {
-        redirectToLogin();
-        return;
-      }
-      setAuthenticated(true);
+    if (loading || user) return;
+    navigate({
+      to: "/login",
+      search: { redirect: `${location.pathname}${location.searchStr}` },
+      replace: true,
     });
+  }, [loading, user, location.pathname, location.searchStr, navigate]);
 
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (session) setAuthenticated(true);
-      else redirectToLogin();
-    });
-
-    return () => {
-      active = false;
-      listener.subscription.unsubscribe();
-    };
-  }, [location.pathname, location.searchStr, navigate]);
-
-  if (!authenticated) {
+  if (loading || !user) {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-background">
         <img src={logo.url} alt="Roket" className="h-10" />
