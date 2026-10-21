@@ -3,6 +3,7 @@ import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import type { User } from "@supabase/supabase-js";
 import { toast } from "sonner";
 import { AdsterraBanner } from "@/components/AdsterraBanner";
+import { HilltopVideoAd } from "@/components/HilltopVideoAd";
 import { KycModal } from "@/components/KycModal";
 import { RequireAuth } from "@/components/RequireAuth";
 import { supabase } from "@/integrations/supabase/client";
@@ -60,6 +61,7 @@ function DashboardContent() {
   const requestId = useRef(0);
   const [adOpen, setAdOpen] = useState(false);
   const [adSecondsLeft, setAdSecondsLeft] = useState(AD_SECONDS);
+  const [videoDone, setVideoDone] = useState(false);
   const [adClaiming, setAdClaiming] = useState(false);
   const [adEarnings, setAdEarnings] = useState<AdEarning[]>([]);
   const [referrals, setReferrals] = useState<ReferralMember[]>([]);
@@ -202,6 +204,7 @@ function DashboardContent() {
   useEffect(() => {
     if (!adOpen) return;
     setAdSecondsLeft(AD_SECONDS);
+    setVideoDone(false);
   }, [adOpen]);
 
   useEffect(() => {
@@ -212,6 +215,7 @@ function DashboardContent() {
 
   const openAd = () => {
     setAdSecondsLeft(AD_SECONDS);
+    setVideoDone(false);
     setAdOpen(true);
   };
 
@@ -232,7 +236,7 @@ function DashboardContent() {
   };
 
   const claimAdReward = async () => {
-    if (!user || adClaiming || adSecondsLeft > 0) return;
+    if (!user || adClaiming || adSecondsLeft > 0 || !videoDone) return;
     setAdClaiming(true);
     try {
       const currentExtra = Number(profile?.extra_balance ?? 0);
@@ -296,6 +300,10 @@ function DashboardContent() {
   };
 
   const totalBalance = mainBalance + extraBalance;
+  // Strict dual-ad gate: the reward unlocks only when the 15 second timer has
+  // elapsed AND the Hilltop video ad reported that it played to the end.
+  const adTimerDone = adSecondsLeft <= 0;
+  const canClaimAd = adTimerDone && videoDone;
   const sourceBalance = withdrawSource === "main" ? mainBalance : extraBalance;
   const lastWithdrawAt = profile?.last_withdraw_at
     ? new Date(profile.last_withdraw_at).getTime()
@@ -798,17 +806,17 @@ function DashboardContent() {
       )}
 
       {adOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto overscroll-contain bg-black/70 p-4 sm:items-center">
           <div
             role="dialog"
             aria-modal="true"
             aria-labelledby="watch-ad-title"
-            className="w-full max-w-md rounded-2xl border bg-card p-6 shadow-glow"
+            className="my-auto max-h-[90vh] w-full max-w-md overflow-y-auto rounded-2xl border bg-card p-5 shadow-glow sm:p-6"
           >
             <div className="flex items-start justify-between gap-3">
               <div>
                 <p className="text-xs font-semibold uppercase tracking-[0.25em] text-primary">
-                  Sponsored
+                  Watch &amp; Earn
                 </p>
                 <h2 id="watch-ad-title" className="mt-1 font-display text-xl font-bold">
                   Watch Ads &amp; Earn $0.05
@@ -825,25 +833,51 @@ function DashboardContent() {
               </button>
             </div>
 
-            <div className="mt-4 overflow-hidden rounded-xl border border-border/60">
-              <div className="bg-background">
-                <AdsterraBanner />
-              </div>
-              <p className="bg-muted/40 px-3 py-2 text-center text-xs text-muted-foreground">
-                Please wait while the ad loads…
+            <div className="mt-4 space-y-4">
+              <section>
+                <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-[0.25em] text-muted-foreground">
+                  Sponsored
+                </p>
+                <HilltopVideoAd onAdCompleted={() => setVideoDone(true)} />
+                <p
+                  className={`mt-1.5 text-[11px] ${
+                    videoDone ? "text-emerald-500" : "text-muted-foreground"
+                  }`}
+                >
+                  {videoDone
+                    ? "Video ad completed ✓"
+                    : "Watch the video to the end to unlock your reward."}
+                </p>
+              </section>
+
+              <section className="overflow-hidden rounded-xl border border-border/60">
+                <div className="flex items-center justify-between bg-muted/40 px-3 py-1.5">
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.25em] text-muted-foreground">
+                    Sponsored
+                  </p>
+                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                    Image ad
+                  </p>
+                </div>
+                <div className="bg-background">
+                  <AdsterraBanner />
+                </div>
+              </section>
+
+              <p className="text-center text-xs text-muted-foreground">
+                Complete both ads to claim your reward.
               </p>
-              <div className="h-1.5 bg-muted">
-                <div
-                  className="h-full bg-brand transition-all duration-1000"
-                  style={{ width: `${((AD_SECONDS - adSecondsLeft) / AD_SECONDS) * 100}%` }}
-                />
-              </div>
             </div>
 
-            <div className="mt-4 text-center">
-              {adSecondsLeft > 0 ? (
-                <p className="font-display text-4xl font-bold text-primary">{adSecondsLeft}s</p>
-              ) : (
+            <div className="mt-4 h-1.5 overflow-hidden rounded-full bg-muted">
+              <div
+                className="h-full bg-brand transition-all duration-1000"
+                style={{ width: `${((AD_SECONDS - adSecondsLeft) / AD_SECONDS) * 100}%` }}
+              />
+            </div>
+
+            <div className="mt-3 text-center">
+              {canClaimAd ? (
                 <button
                   type="button"
                   onClick={claimAdReward}
@@ -852,9 +886,19 @@ function DashboardContent() {
                 >
                   {adClaiming ? "Claiming…" : "Claim $0.05"}
                 </button>
+              ) : adTimerDone ? (
+                <p className="rounded-lg border border-dashed border-border px-3 py-3 text-sm text-muted-foreground">
+                  Finish the video ad to unlock your reward.
+                </p>
+              ) : (
+                <p className="font-display text-4xl font-bold text-primary">{adSecondsLeft}s</p>
               )}
               <p className="mt-2 text-xs uppercase tracking-[0.2em] text-muted-foreground">
-                {adSecondsLeft > 0 ? "seconds remaining" : "reward ready"}
+                {canClaimAd
+                  ? "reward ready"
+                  : adTimerDone
+                    ? "video ad required"
+                    : "seconds remaining"}
               </p>
             </div>
           </div>

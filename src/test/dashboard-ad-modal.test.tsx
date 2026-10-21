@@ -49,6 +49,16 @@ vi.mock("@/components/AuthProvider", () => ({
 
 vi.mock("@/components/KycModal", () => ({ KycModal: () => null }));
 
+// The real player resolves a remote VAST tag, which belongs in its own test
+// file. Here we only need a deterministic way to report "video finished".
+vi.mock("@/components/HilltopVideoAd", () => ({
+  HilltopVideoAd: ({ onAdCompleted }: { onAdCompleted?: () => void }) => (
+    <button type="button" onClick={() => onAdCompleted?.()}>
+      Finish video ad
+    </button>
+  ),
+}));
+
 vi.mock("@/integrations/supabase/client", () => {
   const builder = (table: string) => {
     const query: Record<string, unknown> = {};
@@ -104,18 +114,36 @@ afterEach(() => {
 });
 
 describe("Watch Ads & Earn modal", () => {
-  it("uses the real Adsterra banner instead of the simulated placeholder", async () => {
+  const finishVideo = () =>
+    fireEvent.click(screen.getByRole("button", { name: "Finish video ad" }));
+
+  it("stacks the Hilltop video ad above the Adsterra banner and explains the dual-ad gate", async () => {
     await openAdModal();
 
     expect(screen.queryByText(/Simulated Ad Playing/i)).toBeNull();
-    expect(screen.getByText(/Please wait while the ad loads/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Finish video ad" })).toBeInTheDocument();
+    expect(screen.getByText("Complete both ads to claim your reward.")).toBeInTheDocument();
 
     const injected = document.querySelectorAll(`script[src="${AD_SRC}"]`);
     expect(injected).toHaveLength(1);
     expect(injected[0]?.parentElement?.className).toContain("h-[250px]");
+
+    // One label for the video creative, one for the image creative.
+    expect(screen.getAllByText("Sponsored")).toHaveLength(2);
+
+    const videoSlot = screen.getByRole("button", { name: "Finish video ad" });
+    const bannerSlot = document.querySelector(`script[src="${AD_SRC}"]`) as Element;
+    expect(
+      videoSlot.compareDocumentPosition(bannerSlot) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+
+    // Long content must scroll inside the viewport on small screens.
+    const dialog = screen.getByRole("dialog");
+    expect(dialog.className).toContain("max-h-[90vh]");
+    expect(dialog.className).toContain("overflow-y-auto");
   });
 
-  it("keeps the 15 second countdown and reveals Claim only when it finishes", async () => {
+  it("keeps the 15 second countdown but withholds Claim until the video finishes", async () => {
     await openAdModal({ fakeTimers: true });
 
     expect(screen.getByText("15s")).toBeInTheDocument();
@@ -134,8 +162,41 @@ describe("Watch Ads & Earn modal", () => {
     });
 
     expect(screen.queryByText(/^\d+s$/)).toBeNull();
-    expect(screen.getByRole("button", { name: "Claim $0.05" })).toBeInTheDocument();
+    // Timer elapsed, video still unwatched: the reward stays locked.
+    expect(screen.queryByRole("button", { name: "Claim $0.05" })).toBeNull();
+    expect(screen.getByText(/Finish the video ad to unlock your reward/i)).toBeInTheDocument();
+    expect(screen.getByText("video ad required")).toBeInTheDocument();
     // The banner stays mounted for the whole wait.
     expect(document.querySelectorAll(`script[src="${AD_SRC}"]`)).toHaveLength(1);
+
+    await act(async () => {
+      finishVideo();
+    });
+
+    expect(screen.getByRole("button", { name: "Claim $0.05" })).toBeInTheDocument();
+    expect(screen.getByText("reward ready")).toBeInTheDocument();
+  });
+
+  it("does not reveal Claim when only the video has finished", async () => {
+    await openAdModal({ fakeTimers: true });
+
+    await act(async () => {
+      finishVideo();
+    });
+    expect(screen.getByText("Video ad completed ✓")).toBeInTheDocument();
+
+    for (let elapsed = 1; elapsed <= 14; elapsed += 1) {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1000);
+      });
+      expect(screen.queryByRole("button", { name: "Claim $0.05" })).toBeNull();
+    }
+
+    // The 15th tick satisfies the timer half of the gate.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000);
+    });
+
+    expect(screen.getByRole("button", { name: "Claim $0.05" })).toBeInTheDocument();
   });
 });
