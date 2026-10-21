@@ -92,12 +92,14 @@ BEGIN
     v_referred_by := NULL;
   END IF;
 
-  INSERT INTO public.profiles (id, full_name, email, referred_by)
-  VALUES (NEW.id, v_full_name, NEW.email, v_referred_by)
+  -- NOTE: profiles has no email column, so only the columns that exist here are
+  -- written. kyc_status is added by 0003_kyc.sql and written by the newer
+  -- function in supabase/migrations/20261021030000_fix_handle_new_user.sql.
+  INSERT INTO public.profiles AS p (id, full_name, referred_by)
+  VALUES (NEW.id, v_full_name, v_referred_by)
   ON CONFLICT (id) DO UPDATE
     SET full_name = EXCLUDED.full_name,
-        email = EXCLUDED.email,
-        referred_by = COALESCE(public.profiles.referred_by, EXCLUDED.referred_by);
+        referred_by = COALESCE(p.referred_by, EXCLUDED.referred_by);
 
   RETURN NEW;
 END;
