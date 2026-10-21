@@ -76,6 +76,11 @@ function Signup() {
         }
       }
 
+      // The profile row is created by the on_auth_user_created trigger
+      // (public.handle_new_user), which reads this metadata: full_name ->
+      // profiles.full_name, and referral_code -> the referrer's id. It only
+      // honors referred_by when it is a UUID, so that key carries the resolved
+      // id rather than the short code.
       const { data, error: authError } = await supabase.auth.signUp({
         email: cleanEmail,
         password,
@@ -107,35 +112,6 @@ function Signup() {
       }
 
       if (data.session) {
-        const baseProfile = {
-          id: data.user.id,
-          full_name: cleanName,
-          referred_by: referredBy,
-        };
-
-        let { error: profileError } = await supabase.from("profiles").upsert(
-          {
-            ...baseProfile,
-            email: cleanEmail,
-          },
-          { onConflict: "id", ignoreDuplicates: true },
-        );
-
-        // Older profile tables may not have the email column yet. Retry with the
-        // columns every version of the table has so signup never gets stuck.
-        if (profileError?.code === "PGRST204") {
-          const retry = await supabase
-            .from("profiles")
-            .upsert(baseProfile, { onConflict: "id", ignoreDuplicates: true });
-          profileError = retry.error;
-        }
-
-        if (profileError) {
-          setError(profileError.message);
-          toast.error(profileError.message);
-          return;
-        }
-
         toast.success("Account created! Redirecting to your dashboard.");
         navigate({ to: "/dashboard", replace: true });
         return;
