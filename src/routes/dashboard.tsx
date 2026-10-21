@@ -55,6 +55,8 @@ function DashboardContent() {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
+  const [profileError, setProfileError] = useState("");
+  const [reloadKey, setReloadKey] = useState(0);
   const [adOpen, setAdOpen] = useState(false);
   const [adSecondsLeft, setAdSecondsLeft] = useState(AD_SECONDS);
   const [adClaiming, setAdClaiming] = useState(false);
@@ -70,6 +72,9 @@ function DashboardContent() {
     let active = true;
 
     const load = async () => {
+      setLoading(true);
+      setProfileError("");
+
       const {
         data: { user: currentUser },
       } = await supabase.auth.getUser();
@@ -78,13 +83,36 @@ function DashboardContent() {
       setUser(currentUser);
 
       if (currentUser) {
-        const { data } = await supabase
+        // The KYC gate depends on this row, so read it before rendering the
+        // dashboard (and never open the KYC modal until it has been read).
+        const { data, error: profileFetchError } = await supabase
           .from("profiles")
           .select("*")
           .eq("id", currentUser.id)
           .maybeSingle();
         if (!active) return;
-        setProfile(data);
+
+        console.log("[dashboard] profile fetch", {
+          userId: currentUser.id,
+          kyc_status: data?.kyc_status ?? null,
+          error: profileFetchError?.message ?? null,
+        });
+
+        if (profileFetchError) {
+          console.error("[dashboard] profile fetch failed", {
+            userId: currentUser.id,
+            message: profileFetchError.message,
+            code: profileFetchError.code,
+            details: profileFetchError.details,
+            hint: profileFetchError.hint,
+          });
+          setProfile(null);
+          setProfileError(profileFetchError.message);
+        } else {
+          setProfile(data);
+        }
+
+        setLoading(false);
 
         const { data: earnings } = await supabase
           .from("transactions")
@@ -103,6 +131,7 @@ function DashboardContent() {
           .order("created_at", { ascending: false });
         if (!active) return;
         if (team) setReferrals(team as ReferralMember[]);
+        return;
       }
 
       if (active) setLoading(false);
@@ -113,7 +142,7 @@ function DashboardContent() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [reloadKey]);
 
   const signOut = async () => {
     const { error } = await supabase.auth.signOut();
@@ -123,6 +152,8 @@ function DashboardContent() {
     }
     navigate({ to: "/login", replace: true });
   };
+
+  const reloadProfile = () => setReloadKey((key) => key + 1);
 
   const fullName =
     profile?.full_name ??
@@ -137,8 +168,13 @@ function DashboardContent() {
       ? `https://roket.bond/signup?ref=${user.id}`
       : "";
   const memberSince = profile?.created_at ?? user?.created_at;
+  // The KYC gate is only trustworthy once the profile row has been read:
+  // loading === false, no fetch error, and a real row in hand.
+  const profileLoaded = !loading && !profileError && profile !== null;
   const kycStatus = profile?.kyc_status ?? null;
-  const kycVerified = kycStatus === "verified";
+  // Normalize so a stored "Verified" / " verified " still counts (the modal
+  // normalizes the same way).
+  const kycVerified = (kycStatus ?? "").trim().toLowerCase() === "verified";
   const mainBalance = Number(profile?.main_balance ?? 0);
   const extraBalance = Number(profile?.extra_balance ?? 0);
 
@@ -366,7 +402,7 @@ function DashboardContent() {
 
       {user && (
         <KycModal
-          open={!loading && !kycVerified}
+          open={profileLoaded && !kycVerified}
           userId={user.id}
           defaultName={fullName === "Trader" ? "" : fullName}
           kycStatus={kycStatus}
@@ -381,6 +417,23 @@ function DashboardContent() {
       )}
 
       <main className="mx-auto max-w-5xl px-4 py-10">
+        {!loading && !profileLoaded && (
+          <div className="mb-6 rounded-2xl border border-destructive/40 bg-destructive/10 p-4 text-sm">
+            <p className="font-semibold text-destructive">We couldn't load your profile.</p>
+            <p className="mt-1 text-muted-foreground">
+              {profileError ||
+                "Your profile record is missing, so your KYC status can't be confirmed."}
+            </p>
+            <button
+              type="button"
+              onClick={reloadProfile}
+              className="mt-3 rounded-lg border border-border px-4 py-2 text-sm font-semibold text-foreground transition-colors hover:border-primary hover:text-primary"
+            >
+              Retry
+            </button>
+          </div>
+        )}
+
         {loading ? (
           <div className="flex min-h-[50vh] items-center justify-center">
             <div className="h-7 w-7 animate-spin rounded-full border-2 border-muted border-t-primary" />

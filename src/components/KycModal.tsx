@@ -81,6 +81,8 @@ export function KycModal({
       if (finishing.current) return;
       finishing.current = true;
 
+      console.log("[KYC] profiles.update -> kyc_status: 'verified'", { userId });
+
       const { data, error: verifyError } = await supabase
         .from("profiles")
         .update({ kyc_status: "verified" })
@@ -88,16 +90,48 @@ export function KycModal({
         .select("*")
         .maybeSingle();
 
+      console.log("[KYC] profiles.update response", { data, error: verifyError });
+
       if (verifyError) {
+        console.error("[KYC] profiles.update failed", {
+          userId,
+          message: verifyError.message,
+          code: verifyError.code,
+          details: verifyError.details,
+          hint: verifyError.hint,
+        });
         finishing.current = false;
-        setError(verifyError.message);
+        setError(`Couldn't save your verification: ${verifyError.message}`);
         toast.error(verifyError.message);
         setPhase("form");
         return;
       }
 
+      // PostgREST does not raise an error when an RLS policy (or a missing row)
+      // makes an UPDATE match zero rows — it returns data: null. Treating that
+      // as success is what let the UI show "Verified" without persisting it, so
+      // the modal came back on refresh. Only proceed on a confirmed row.
+      if (!data || data.kyc_status !== "verified") {
+        console.error("[KYC] profiles.update matched no rows — nothing was persisted", {
+          userId,
+          returned: data,
+          hint: "Verify the profiles RLS UPDATE policy (auth.uid() = id) and that the row exists.",
+        });
+        finishing.current = false;
+        setError(
+          "Verification couldn't be saved to your profile. Please refresh and try again, or contact support.",
+        );
+        toast.error("Verification couldn't be saved. Please try again.");
+        setPhase("form");
+        return;
+      }
+
+      console.log("[KYC] profile persisted as verified", {
+        userId,
+        kycStatus: data.kyc_status,
+      });
       toast.success("Identity verified.");
-      onVerifiedRef.current(data ?? ({ kyc_status: "verified" } as Profile));
+      onVerifiedRef.current(data);
     };
 
     const tick = () => {
@@ -158,7 +192,7 @@ export function KycModal({
         .getPublicUrl(path);
       const idCardUrl = publicUrlData.publicUrl;
 
-      const { error: profileError } = await supabase
+      const { data: submittedRows, error: profileError } = await supabase
         .from("profiles")
         .update({
           full_name: cleanName,
@@ -166,11 +200,34 @@ export function KycModal({
           id_card_url: idCardUrl,
           kyc_status: "pending",
         })
-        .eq("id", userId);
+        .eq("id", userId)
+        .select("id");
+
+      console.log("[KYC] profiles.update (submit) response", {
+        rows: submittedRows,
+        error: profileError,
+      });
 
       if (profileError) {
+        console.error("[KYC] profiles.update (submit) failed", {
+          userId,
+          message: profileError.message,
+          code: profileError.code,
+          details: profileError.details,
+          hint: profileError.hint,
+        });
         setError(profileError.message);
         toast.error(profileError.message);
+        return;
+      }
+
+      if (!submittedRows || submittedRows.length === 0) {
+        console.error("[KYC] profiles.update (submit) matched no rows — nothing was persisted", {
+          userId,
+          hint: "Verify the profiles RLS UPDATE policy (auth.uid() = id) and that the row exists.",
+        });
+        setError("We couldn't save your KYC submission. Please refresh and try again.");
+        toast.error("We couldn't save your KYC submission.");
         return;
       }
 
