@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import type { User } from "@supabase/supabase-js";
 import { toast } from "sonner";
+import { AdsterraBanner } from "@/components/AdsterraBanner";
 import { KycModal } from "@/components/KycModal";
 import { RequireAuth } from "@/components/RequireAuth";
 import { supabase } from "@/integrations/supabase/client";
@@ -825,13 +826,12 @@ function DashboardContent() {
             </div>
 
             <div className="mt-4 overflow-hidden rounded-xl border border-border/60">
-              <div className="flex aspect-video flex-col items-center justify-center gap-2 bg-gradient-to-br from-fuchsia-700/40 via-purple-900/60 to-background p-6 text-center">
-                <div className="flex h-14 w-14 items-center justify-center rounded-full bg-white/10 text-2xl">
-                  ▶
-                </div>
-                <p className="text-sm font-semibold">Simulated Ad Playing…</p>
-                <p className="text-xs text-muted-foreground">Thanks for supporting Roket</p>
+              <div className="bg-background">
+                <AdsterraBanner />
               </div>
+              <p className="bg-muted/40 px-3 py-2 text-center text-xs text-muted-foreground">
+                Please wait while the ad loads…
+              </p>
               <div className="h-1.5 bg-muted">
                 <div
                   className="h-full bg-brand transition-all duration-1000"
