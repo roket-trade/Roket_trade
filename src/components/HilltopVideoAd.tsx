@@ -17,6 +17,19 @@ const COMPLETION_EPSILON_SECONDS = 0.25;
 // If neither the VAST response nor the media shows up in this window we fail
 // closed — the reward stays locked rather than unlocking on a broken ad.
 const LOAD_TIMEOUT_MS = 20000;
+// VAST error 402 ("media timeout"): the creative got a source but never began
+// loading. Eight seconds is long enough for a cold CDN and short enough that a
+// blocked request surfaces as a retry instead of an endless spinner.
+const MEDIA_START_TIMEOUT_MS = 8000;
+// MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED — the browser cannot decode the file.
+const MEDIA_ERR_SRC_NOT_SUPPORTED = 4;
+
+// Proxy fallback: some ad networks reject browser requests to their media CDNs
+// (no Access-Control-Allow-Origin, hotlink blocking or bot filtering), which
+// surfaces as net::ERR_FAILED even though the VAST XML itself loads fine.
+// There is no client-side workaround — such media must be fetched by a
+// server-side proxy on our own origin and played from there. The error UI
+// surfaces that hint whenever a network/media failure keeps the reward locked.
 
 type AdStatus = "loading" | "playing" | "completed" | "error";
 
@@ -71,20 +84,21 @@ function parseMediaFiles(root: Element): MediaFile[] {
     );
 }
 
-function pickMediaFile(files: MediaFile[], video: HTMLVideoElement | null): MediaFile | null {
-  if (files.length === 0) return null;
+function sortMediaFiles(files: MediaFile[]): MediaFile[] {
+  return [...files].sort((a, b) => b.height - a.height || b.bitrate - a.bitrate);
+}
 
-  const byQuality = [...files].sort((a, b) => b.height - a.height || b.bitrate - a.bitrate);
-  const playable = byQuality.filter((file) => {
-    if (!video || typeof video.canPlayType !== "function") {
-      return file.type === "" || file.type === "video/mp4";
-    }
-    return file.type === "" || video.canPlayType(file.type) !== "";
-  });
-
-  // Browsers (and jsdom) can report "" for every type; fall back to the best
-  // advertised file rather than giving up on a usable ad.
-  return playable[0] ?? byQuality[0] ?? null;
+/**
+ * Ask the browser whether it can decode a MIME type. A missing type means "let
+ * the media element try it" — VAST responses in the wild often omit `type`
+ * while serving a plain MP4.
+ */
+function isTypeSupported(type: string): boolean {
+  if (!type) return true;
+  if (typeof document === "undefined") return true;
+  const probe = document.createElement("video");
+  if (typeof probe.canPlayType !== "function") return type === "video/mp4";
+  return probe.canPlayType(type) !== "";
 }
 
 async function fetchVastDocument(url: string): Promise<Document> {
@@ -158,14 +172,19 @@ export function HilltopVideoAd({ onAdCompleted }: HilltopVideoAdProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const completedRef = useRef(false);
   const impressionsSentRef = useRef(false);
+  const mediaStartedRef = useRef(false);
   const onAdCompletedRef = useRef(onAdCompleted);
 
   const [status, setStatus] = useState<AdStatus>("loading");
-  const [media, setMedia] = useState<MediaFile | null>(null);
+  const [candidates, setCandidates] = useState<MediaFile[]>([]);
+  const [candidateIndex, setCandidateIndex] = useState(0);
   const [impressionUrls, setImpressionUrls] = useState<string[]>([]);
   const [needsInteraction, setNeedsInteraction] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
+  const [proxyHint, setProxyHint] = useState(false);
   const [attempt, setAttempt] = useState(0);
+
+  const currentMedia = candidates[candidateIndex] ?? null;
 
   useEffect(() => {
     onAdCompletedRef.current = onAdCompleted;
@@ -185,10 +204,13 @@ export function HilltopVideoAd({ onAdCompleted }: HilltopVideoAdProps) {
     let cancelled = false;
     completedRef.current = false;
     impressionsSentRef.current = false;
+    mediaStartedRef.current = false;
     setStatus("loading");
-    setMedia(null);
+    setCandidates([]);
+    setCandidateIndex(0);
     setImpressionUrls([]);
     setErrorMessage("");
+    setProxyHint(false);
     setNeedsInteraction(false);
 
     (async () => {
@@ -196,14 +218,22 @@ export function HilltopVideoAd({ onAdCompleted }: HilltopVideoAdProps) {
         const payload = await loadVast(HILLTOP_VAST_TAG_URL);
         if (cancelled) return;
 
-        const chosen = pickMediaFile(payload.mediaFiles, videoRef.current);
-        if (!chosen) throw new Error("The video ad has no playable media file.");
+        // Keep every format the browser says it can decode, best first. If
+        // none qualify we stop before requesting a file we know will fail.
+        const supported = sortMediaFiles(payload.mediaFiles).filter((file) =>
+          isTypeSupported(file.type),
+        );
+        if (supported.length === 0) {
+          throw new Error("Ad format not supported.");
+        }
 
         setImpressionUrls(payload.impressionUrls);
-        setMedia(chosen);
+        setCandidates(supported);
+        setCandidateIndex(0);
       } catch (error) {
         if (cancelled) return;
         setStatus("error");
+        setProxyHint(false);
         setErrorMessage(error instanceof Error ? error.message : "The video ad couldn't load.");
       }
     })();
@@ -213,20 +243,57 @@ export function HilltopVideoAd({ onAdCompleted }: HilltopVideoAdProps) {
     };
   }, [attempt]);
 
-  // Fail closed if the ad never starts, so a stalled network can't leave the
-  // modal spinning forever with the claim gate ambiguous.
+  // Attach the chosen MediaFile ourselves so `crossOrigin` is set *before* the
+  // request starts. The attribute is ignored once `src` exists, which is
+  // exactly how a CORS-enabled CDN request turns into net::ERR_FAILED.
   useEffect(() => {
-    if (status !== "loading") return;
+    const video = videoRef.current;
+    if (!video || !currentMedia) return;
+
+    mediaStartedRef.current = false;
+    video.crossOrigin = "anonymous";
+    video.src = currentMedia.url;
+    video.load();
+  }, [currentMedia, attempt]);
+
+  // VAST 402-style watchdog: a source that never starts loading must not leave
+  // the modal spinning forever. This keeps the reward gate closed and offers
+  // Retry instead.
+  useEffect(() => {
+    if (!currentMedia) return;
+    const timer = setTimeout(() => {
+      if (mediaStartedRef.current || completedRef.current) return;
+      console.error("[HilltopVideoAd] media did not start within 8s", {
+        src: currentMedia.url,
+        type: currentMedia.type,
+      });
+      setStatus("error");
+      setProxyHint(true);
+      setNeedsInteraction(false);
+      setErrorMessage("The video ad took too long to load.");
+    }, MEDIA_START_TIMEOUT_MS);
+    return () => clearTimeout(timer);
+  }, [currentMedia, attempt]);
+
+  // Fail closed if the VAST document itself never arrives.
+  useEffect(() => {
+    if (status !== "loading" || candidates.length > 0) return;
     const timer = setTimeout(() => {
       setStatus("error");
+      setProxyHint(false);
       setErrorMessage("The video ad timed out. Please retry.");
     }, LOAD_TIMEOUT_MS);
     return () => clearTimeout(timer);
-  }, [status, attempt]);
+  }, [status, candidates.length, attempt]);
+
+  const markMediaStarted = useCallback(() => {
+    mediaStartedRef.current = true;
+  }, []);
 
   const startPlayback = useCallback(() => {
     const video = videoRef.current;
     if (!video || completedRef.current) return;
+    mediaStartedRef.current = true;
     // Keep the muted property in sync with the attribute; several browsers
     // only allow autoplay on a programmatically muted element.
     video.muted = true;
@@ -238,6 +305,7 @@ export function HilltopVideoAd({ onAdCompleted }: HilltopVideoAdProps) {
   }, []);
 
   const handlePlaying = useCallback(() => {
+    mediaStartedRef.current = true;
     setStatus((current) => (current === "completed" ? current : "playing"));
     setNeedsInteraction(false);
 
@@ -257,27 +325,58 @@ export function HilltopVideoAd({ onAdCompleted }: HilltopVideoAdProps) {
 
   const handleError = useCallback(() => {
     if (completedRef.current) return;
+    // The element reacted, so the 8s watchdog is no longer relevant.
+    mediaStartedRef.current = true;
+
+    const video = videoRef.current;
+    const mediaError = video?.error;
+    console.error("[HilltopVideoAd] video error", {
+      message: mediaError?.message || "(no message)",
+      code: mediaError?.code ?? null,
+      src: video?.currentSrc || video?.src || currentMedia?.url,
+    });
+
+    // Format problem? Fall back to the next <MediaFile> from the VAST
+    // response before giving up on the creative.
+    const nextIndex = candidateIndex + 1;
+    if (nextIndex < candidates.length) {
+      setStatus("loading");
+      setErrorMessage("");
+      setProxyHint(false);
+      setCandidateIndex(nextIndex);
+      return;
+    }
+
     setStatus("error");
-    setErrorMessage("The video ad couldn't play. Please retry.");
-  }, []);
+    setNeedsInteraction(false);
+    if (mediaError?.code === MEDIA_ERR_SRC_NOT_SUPPORTED) {
+      setErrorMessage("Ad format not supported.");
+      setProxyHint(false);
+    } else {
+      setErrorMessage("The video ad failed to load (network error).");
+      setProxyHint(true);
+    }
+  }, [candidates, candidateIndex, currentMedia]);
 
   const retry = () => setAttempt((current) => current + 1);
 
   return (
     <div className="w-full overflow-hidden rounded-xl border border-border/60 bg-black">
       <div className="relative aspect-video w-full">
-        {media && (
+        {currentMedia && (
           <video
+            key={currentMedia.url}
             ref={videoRef}
             data-testid="hilltop-video"
             aria-label="Sponsored video ad"
             className="h-full w-full object-contain"
-            src={media.url}
+            crossOrigin="anonymous"
             autoPlay
             muted
             playsInline
             preload="auto"
             controls={false}
+            onLoadedMetadata={markMediaStarted}
             onCanPlay={startPlayback}
             onLoadedData={startPlayback}
             onPlaying={handlePlaying}
@@ -316,6 +415,12 @@ export function HilltopVideoAd({ onAdCompleted }: HilltopVideoAdProps) {
             className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/90 px-4 text-center text-xs text-white/85"
           >
             <p>{errorMessage || "The video ad couldn't load."}</p>
+            {proxyHint && (
+              <p className="text-[10px] leading-relaxed text-white/50">
+                Some ad networks block direct browser playback. If this keeps happening, the ad
+                media needs to be served through a server-side proxy.
+              </p>
+            )}
             <button
               type="button"
               onClick={retry}

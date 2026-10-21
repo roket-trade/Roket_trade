@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { HILLTOP_VAST_TAG_URL, HilltopVideoAd } from "@/components/HilltopVideoAd";
@@ -49,6 +49,33 @@ const VAST_WITHOUT_MEDIA = `<?xml version="1.0" encoding="UTF-8"?>
   </Ad>
 </VAST>`;
 
+// An unsupported format ranks first (1080p, Flash) while the MP4 is the one a
+// browser can actually decode.
+const VAST_FORMAT_FALLBACK = `<?xml version="1.0" encoding="UTF-8"?>
+<VAST version="3.0" xmlns="http://www.w3.org/2001/XMLSchema">
+  <Ad id="formats">
+    <InLine>
+      <AdSystem>HilltopAds</AdSystem>
+      <Creatives><Creative><Linear><Duration>00:00:14</Duration><MediaFiles>
+        <MediaFile delivery="progressive" type="video/x-flv" bitrate="2000" width="1920" height="1080"><![CDATA[https://cdn.example/ad-1080.flv]]></MediaFile>
+        <MediaFile delivery="progressive" type="video/mp4" bitrate="545" width="1280" height="720"><![CDATA[${MEDIA_720}]]></MediaFile>
+      </MediaFiles></Linear></Creative></Creatives>
+    </InLine>
+  </Ad>
+</VAST>`;
+
+const VAST_ONLY_UNSUPPORTED = `<?xml version="1.0" encoding="UTF-8"?>
+<VAST version="3.0" xmlns="http://www.w3.org/2001/XMLSchema">
+  <Ad id="unsupported">
+    <InLine>
+      <AdSystem>HilltopAds</AdSystem>
+      <Creatives><Creative><Linear><Duration>00:00:14</Duration><MediaFiles>
+        <MediaFile delivery="progressive" type="video/x-flv" bitrate="2000" width="1920" height="1080"><![CDATA[https://cdn.example/ad-1080.flv]]></MediaFile>
+      </MediaFiles></Linear></Creative></Creatives>
+    </InLine>
+  </Ad>
+</VAST>`;
+
 function response(body: string) {
   return { ok: true, status: 200, text: async () => body };
 }
@@ -68,6 +95,7 @@ async function renderPlayer(onAdCompleted = vi.fn()) {
 
 beforeEach(() => {
   vi.spyOn(HTMLMediaElement.prototype, "play").mockImplementation(() => Promise.resolve());
+  vi.spyOn(HTMLMediaElement.prototype, "load").mockImplementation(() => {});
   vi.spyOn(HTMLMediaElement.prototype, "canPlayType").mockImplementation((type) =>
     type.includes("mp4") ? "probably" : "",
   );
@@ -75,6 +103,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
@@ -90,6 +119,8 @@ describe("HilltopVideoAd", () => {
       expect.objectContaining({ credentials: "omit" }),
     );
     expect(video.getAttribute("src")).toBe(MEDIA_720);
+    expect(video.getAttribute("crossorigin")).toBe("anonymous");
+    expect(video.crossOrigin).toBe("anonymous");
     expect(video.muted).toBe(true);
     expect(video.autoplay).toBe(true);
     expect(video.getAttribute("playsinline")).not.toBeNull();
@@ -169,13 +200,102 @@ describe("HilltopVideoAd", () => {
     expect(onAdCompleted).not.toHaveBeenCalled();
   });
 
-  it("fails closed when the media itself errors", async () => {
+  it("picks the first MediaFile whose MIME type the browser supports", async () => {
+    stubFetch(VAST_FORMAT_FALLBACK);
+
+    const { video } = await renderPlayer();
+
+    // The 1080p FLV outranks the MP4 by height but cannot be decoded.
+    expect(video.getAttribute("src")).toBe(MEDIA_720);
+  });
+
+  it("rejects creatives whose format the browser cannot play", async () => {
+    stubFetch(VAST_ONLY_UNSUPPORTED);
+
+    const onAdCompleted = vi.fn();
+    render(<HilltopVideoAd onAdCompleted={onAdCompleted} />);
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Ad format not supported.");
+    expect(screen.queryByTestId("hilltop-video")).toBeNull();
+    expect(onAdCompleted).not.toHaveBeenCalled();
+  });
+
+  it("falls back to the next MediaFile when the current one fails", async () => {
     stubFetch(VAST_INLINE);
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const { onAdCompleted, video } = await renderPlayer();
 
+    Object.defineProperty(video, "error", {
+      configurable: true,
+      value: { code: 4, message: "MEDIA_ERR_SRC_NOT_SUPPORTED" },
+    });
     fireEvent.error(video);
 
-    expect(await screen.findByRole("alert")).toHaveTextContent(/couldn't play/i);
+    expect(errorSpy).toHaveBeenCalledWith(
+      "[HilltopVideoAd] video error",
+      expect.objectContaining({ message: "MEDIA_ERR_SRC_NOT_SUPPORTED", code: 4 }),
+    );
+
+    const fallback = screen.getByTestId("hilltop-video");
+    expect(fallback.getAttribute("src")).toBe(MEDIA_480);
+
+    Object.defineProperty(fallback, "error", {
+      configurable: true,
+      value: { code: 4, message: "MEDIA_ERR_SRC_NOT_SUPPORTED" },
+    });
+    fireEvent.error(fallback);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Ad format not supported.");
+    expect(onAdCompleted).not.toHaveBeenCalled();
+  });
+
+  it("shows a network error plus the proxy hint when every MediaFile is blocked", async () => {
+    stubFetch(VAST_INLINE);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const { onAdCompleted, video } = await renderPlayer();
+
+    const networkError = { code: 2, message: "net::ERR_FAILED" };
+    Object.defineProperty(video, "error", { configurable: true, value: networkError });
+    fireEvent.error(video);
+
+    const fallback = screen.getByTestId("hilltop-video");
+    Object.defineProperty(fallback, "error", { configurable: true, value: networkError });
+    fireEvent.error(fallback);
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(/failed to load \(network error\)/i);
+    expect(alert).toHaveTextContent(/server-side proxy/i);
+    expect(screen.getByRole("button", { name: "Retry video ad" })).toBeInTheDocument();
+    expect(onAdCompleted).not.toHaveBeenCalled();
+  });
+
+  it("shows Retry when the media does not start within 8 seconds", async () => {
+    stubFetch(VAST_INLINE);
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const onAdCompleted = vi.fn();
+
+    vi.useFakeTimers();
+    render(<HilltopVideoAd onAdCompleted={onAdCompleted} />);
+
+    // Flush the VAST fetch/parse promise chain on the fake clock.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    expect(screen.getByTestId("hilltop-video")).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).toBeNull();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(8000);
+    });
+
+    expect(screen.getByRole("alert")).toHaveTextContent(/took too long to load/i);
+    expect(screen.getByRole("button", { name: "Retry video ad" })).toBeInTheDocument();
+    expect(consoleError).toHaveBeenCalledWith(
+      "[HilltopVideoAd] media did not start within 8s",
+      expect.objectContaining({ src: MEDIA_720 }),
+    );
     expect(onAdCompleted).not.toHaveBeenCalled();
   });
 });
