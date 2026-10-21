@@ -160,7 +160,7 @@ function DashboardContent() {
     (typeof user?.user_metadata?.["full_name"] === "string"
       ? user.user_metadata["full_name"]
       : "Trader");
-  const email = user?.email ?? profile?.email ?? "";
+  const email = user?.email ?? "";
   // Referral code = user id (short display, full id in link).
   const referralCode = user?.id ? `${user.id.slice(0, 8).toUpperCase()}` : "";
   const referralLink =

@@ -30,17 +30,18 @@ BEGIN
   END IF;
 END $$;
 
--- 3) Fallback view joining email explicitly (works even if the client
--- can't use the FK embed). Admin-only via RLS-friendly security invoker.
-CREATE OR REPLACE VIEW public.admin_pending_transactions
+-- 3) Fallback view of pending deposits/withdrawals.
+-- NOTE: profiles has no email column in this database, so the view cannot join
+-- it. Emails are supplied by public.admin_user_emails() and by the rebuilt
+-- version of this view in 20261021040000_admin_user_emails.sql.
+DROP VIEW IF EXISTS public.admin_pending_transactions;
+CREATE VIEW public.admin_pending_transactions
 WITH (security_invoker = true)
 AS
 SELECT
   t.id, t.user_id, t.type, t.amount, t.deposit_amount, t.plan_name,
-  t.network, t.wallet_address, t.tx_hash, t.status, t.created_at,
-  p.email AS user_email
+  t.network, t.wallet_address, t.tx_hash, t.status, t.created_at
 FROM public.transactions t
-LEFT JOIN public.profiles p ON p.id = t.user_id
 WHERE t.status = 'pending'
   AND t.type IN ('deposit', 'withdrawal');
 GRANT SELECT ON public.admin_pending_transactions TO authenticated;

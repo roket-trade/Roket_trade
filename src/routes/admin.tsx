@@ -27,12 +27,10 @@ type Tx = {
   tx_hash: string | null;
   status: string;
   created_at: string;
-  profiles?: { email: string | null } | null;
 };
 
 type KycUser = {
   id: string;
-  email: string | null;
   full_name: string;
   kyc_status: string | null;
   id_card_url: string | null;
@@ -63,15 +61,15 @@ function AdminContent() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      // Joined query: pulls the user's email in the same round-trip.
-      // Requires a FK from transactions.user_id -> profiles.id.
-      // If the FK doesn't exist, PostgREST returns PGRST200 ("Could not embed...")
-      // and we fall back to the two-step fetch below.
-      const txCols = "id,user_id,type,amount,deposit_amount,plan_name,network,wallet_address,tx_hash,status,created_at,profiles(email)";
+      // profiles has no email column, so nothing here selects or embeds it
+      // (that used to raise PGRST204 / PGRST200). Emails are resolved from
+      // auth.users afterwards through the admin_user_emails() RPC.
+      const txCols =
+        "id,user_id,type,amount,deposit_amount,plan_name,network,wallet_address,tx_hash,status,created_at";
       const [dep, wd, kyc] = await Promise.all([
         supabase.from("transactions").select(txCols).eq("type", "deposit").eq("status", "pending").order("created_at"),
         supabase.from("transactions").select(txCols).eq("type", "withdrawal").eq("status", "pending").order("created_at"),
-        supabase.from("profiles").select("id,email,full_name,kyc_status,id_card_url,created_at").eq("kyc_status", "pending").order("created_at"),
+        supabase.from("profiles").select("id,full_name,kyc_status,id_card_url,created_at").eq("kyc_status", "pending").order("created_at"),
       ]);
       if (dep.error) {
         console.error("[admin] deposits fetch error:", dep.error.code, dep.error.message, dep.error.details, dep.error.hint);
@@ -83,45 +81,42 @@ function AdminContent() {
         console.error("[admin] KYC fetch error:", kyc.error.code, kyc.error.message, kyc.error.details, kyc.error.hint);
       }
       const firstErr = dep.error ?? wd.error ?? kyc.error;
-      // PGRST200 = "could not embed profiles" -> no FK; retry without the join.
-      const joinFailed =
-        (dep.error as { code?: string } | null)?.code === "PGRST200" ||
-        (wd.error as { code?: string } | null)?.code === "PGRST200";
-      let deps = ((dep.data ?? []) as Tx[]);
-      let wds = ((wd.data ?? []) as Tx[]);
-      if (joinFailed) {
-        console.warn("[admin] profiles join failed (missing FK?), retrying without join.");
-        const cols = "id,user_id,type,amount,deposit_amount,plan_name,network,wallet_address,tx_hash,status,created_at";
-        const [dep2, wd2] = await Promise.all([
-          supabase.from("transactions").select(cols).eq("type", "deposit").eq("status", "pending").order("created_at"),
-          supabase.from("transactions").select(cols).eq("type", "withdrawal").eq("status", "pending").order("created_at"),
-        ]);
-        if (dep2.error) console.error("[admin] deposits retry error:", dep2.error.code, dep2.error.message);
-        if (wd2.error) console.error("[admin] withdrawals retry error:", wd2.error.code, wd2.error.message);
-        if (dep2.error ?? wd2.error) throw (dep2.error ?? wd2.error);
-        deps = (dep2.data ?? []) as Tx[];
-        wds = (wd2.data ?? []) as Tx[];
-      } else if (firstErr) {
-        throw firstErr;
-      }
+      if (firstErr) throw firstErr;
+
+      const deps = (dep.data ?? []) as Tx[];
+      const wds = (wd.data ?? []) as Tx[];
+      const kycRows = (kyc.data ?? []) as KycUser[];
       setDeposits(deps);
       setWithdrawals(wds);
-      setKycUsers(((kyc.data ?? []) as KycUser[]));
-      // Emails come from the join when available; backfill any missing via profiles.
-      const map: Record<string, string> = {};
-      for (const t of [...deps, ...wds]) {
-        if (t.user_id && t.profiles?.email) map[t.user_id] = t.profiles.email;
+      setKycUsers(kycRows);
+
+      // One RPC call covers every row on the page (deposits, withdrawals and
+      // KYC), so the panel needs a single extra round-trip and no per-row query.
+      const ids = [
+        ...new Set(
+          [...deps, ...wds]
+            .map((tx) => tx.user_id)
+            .concat(kycRows.map((u) => u.id))
+            .filter((id): id is string => Boolean(id)),
+        ),
+      ];
+
+      if (ids.length === 0) {
+        setEmails({});
+        return;
       }
-      const missing = [...new Set([...deps, ...wds].map((t) => t.user_id).filter((id): id is string => Boolean(id) && !map[id]))];
-      if (missing.length > 0) {
-        const { data: profs, error: profErr } = await supabase.from("profiles").select("id,email").in("id", missing);
-        if (profErr) {
-          console.error("[admin] profiles email backfill error:", profErr.code, profErr.message, profErr.details, profErr.hint);
-        } else {
-          for (const p of ((profs ?? []) as { id: string; email: string | null }[])) map[p.id] = p.email ?? "—";
+
+      const { data: emailRows, error: emailErr } = await supabase.rpc("admin_user_emails", { ids });
+      if (emailErr) {
+        console.error("[admin] admin_user_emails RPC failed:", emailErr.code, emailErr.message, emailErr.details, emailErr.hint);
+        setEmails({});
+      } else {
+        const map: Record<string, string> = {};
+        for (const row of emailRows ?? []) {
+          if (row.email) map[row.id] = row.email;
         }
+        setEmails(map);
       }
-      setEmails(map);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Couldn't load admin data.";
       console.error("[admin] load failed:", err);
@@ -284,7 +279,7 @@ function AdminContent() {
                 {deposits.length === 0 && (<tr><td colSpan={6} className="px-4 py-10 text-center text-muted-foreground">No pending deposits.</td></tr>)}
                 {deposits.map((tx) => (
                   <tr key={tx.id} className="border-b border-border/40 last:border-0">
-                    <td className="px-4 py-3 font-medium">{tx.profiles?.email ?? (tx.user_id ? emails[tx.user_id] ?? short(tx.user_id, 10) : "—")}</td>
+                    <td className="px-4 py-3 font-medium">{tx.user_id ? emails[tx.user_id] ?? short(tx.user_id, 10) : "—"}</td>
                     <td className="px-4 py-3">{tx.plan_name ?? "—"}</td>
                     <td className="px-4 py-3 font-semibold text-primary">{money(Number(tx.deposit_amount ?? tx.amount))}</td>
                     <td className="px-4 py-3 font-mono text-xs" title={tx.tx_hash ?? ""}>{short(tx.tx_hash, 22)}</td>
@@ -309,7 +304,7 @@ function AdminContent() {
                 {withdrawals.length === 0 && (<tr><td colSpan={4} className="px-4 py-10 text-center text-muted-foreground">No pending withdrawals.</td></tr>)}
                 {withdrawals.map((tx) => (
                   <tr key={tx.id} className="border-b border-border/40 last:border-0">
-                    <td className="px-4 py-3 font-medium">{tx.profiles?.email ?? (tx.user_id ? emails[tx.user_id] ?? short(tx.user_id, 10) : "—")}</td>
+                    <td className="px-4 py-3 font-medium">{tx.user_id ? emails[tx.user_id] ?? short(tx.user_id, 10) : "—"}</td>
                     <td className="px-4 py-3 font-semibold text-primary">{money(Math.abs(Number(tx.amount)))}</td>
                     <td className="max-w-[260px] truncate px-4 py-3 font-mono text-xs" title={tx.wallet_address ?? ""}>{tx.wallet_address ?? "—"}</td>
                     <td className="px-4 py-3"><div className="flex justify-end gap-2">
@@ -332,7 +327,7 @@ function AdminContent() {
                 {kycUsers.length === 0 && (<tr><td colSpan={4} className="px-4 py-10 text-center text-muted-foreground">No pending KYC.</td></tr>)}
                 {kycUsers.map((u) => (
                   <tr key={u.id} className="border-b border-border/40 last:border-0">
-                    <td className="px-4 py-3 font-medium">{u.email ?? short(u.id, 10)}</td>
+                    <td className="px-4 py-3 font-medium">{emails[u.id] ?? short(u.id, 10)}</td>
                     <td className="px-4 py-3">{u.full_name}</td>
                     <td className="px-4 py-3">{u.id_card_url ? (<a href={u.id_card_url} target="_blank" rel="noreferrer" className="font-semibold text-primary hover:underline">View ID card</a>) : (<span className="text-muted-foreground">No file</span>)}</td>
                     <td className="px-4 py-3"><div className="flex justify-end gap-2">

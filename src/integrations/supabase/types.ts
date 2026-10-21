@@ -54,7 +54,6 @@ export type Database = {
         Row: {
           address: string | null
           created_at: string
-          email: string | null
           extra_balance: number | null
           full_name: string
           id: string
@@ -69,7 +68,6 @@ export type Database = {
         Insert: {
           address?: string | null
           created_at?: string
-          email?: string | null
           extra_balance?: number | null
           full_name: string
           id: string
@@ -84,7 +82,6 @@ export type Database = {
         Update: {
           address?: string | null
           created_at?: string
-          email?: string | null
           extra_balance?: number | null
           full_name?: string
           id?: string
@@ -145,6 +142,10 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      admin_user_emails: {
+        Args: { ids?: string[] | null }
+        Returns: { id: string; email: string | null }[]
+      }
       resolve_referral_code: {
         Args: { code: string }
         Returns: string | null
