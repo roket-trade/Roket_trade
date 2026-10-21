@@ -1,6 +1,5 @@
 import { Link } from "@tanstack/react-router";
 import { Twitter, Send, Facebook, Youtube, Instagram, type LucideIcon } from "lucide-react";
-import logo from "@/assets/roket-logo.png.asset.json";
 
 type Social = { icon: LucideIcon; label: string };
 
@@ -18,7 +17,7 @@ export function Footer() {
       <div className="mx-auto max-w-6xl px-6 py-14">
         <div className="flex flex-col gap-10 md:flex-row md:items-start md:justify-between">
           <div className="max-w-xs">
-            <img src={logo.url} alt="Roket" className="h-9" />
+            <img src="/logo.png" alt="Roket" className="h-9" />
             <p className="mt-4 text-sm leading-relaxed text-muted-foreground">
               Simple crypto trading plans, daily profits, and payouts that actually arrive.
             </p>

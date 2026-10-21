@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import type { User } from "@supabase/supabase-js";
 import { toast } from "sonner";
-import logo from "@/assets/roket-logo.png.asset.json";
 import { KycModal } from "@/components/KycModal";
 import { RequireAuth } from "@/components/RequireAuth";
 import { supabase } from "@/integrations/supabase/client";
@@ -401,7 +400,7 @@ function DashboardContent() {
       <header className="border-b border-border/70">
         <div className="mx-auto flex max-w-5xl items-center justify-between gap-4 px-4 py-4">
           <Link to="/">
-            <img src={logo.url} alt="Roket" className="h-9" />
+            <img src="/logo.png" alt="Roket" className="h-9" />
           </Link>
           <div className="flex items-center gap-2">
             <Link

@@ -1,6 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { useNavigate, useRouterState } from "@tanstack/react-router";
-import logo from "@/assets/roket-logo.png.asset.json";
 import { useAuth } from "@/components/AuthProvider";
 import { supabase } from "@/integrations/supabase/client";
 
@@ -53,7 +52,7 @@ export function RequireAdmin({ children }: { children: ReactNode }) {
   if (authLoading || checking || !allowed) {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-background">
-        <img src={logo.url} alt="Roket" className="h-10" />
+        <img src="/logo.png" alt="Roket" className="h-10" />
         <div className="h-6 w-6 animate-spin rounded-full border-2 border-muted border-t-primary" />
         <p className="text-sm text-muted-foreground">Verifying admin access…</p>
       </div>

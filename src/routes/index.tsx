@@ -1,5 +1,4 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import logo from "@/assets/roket-logo.png.asset.json";
 import { CandleChart } from "@/components/CandleChart";
 import { LiveTransactions } from "@/components/LiveTransactions";
 import { HowItWorks } from "@/components/HowItWorks";
@@ -66,7 +65,7 @@ function Index() {
   return (
     <div className="min-h-screen">
       <header className="mx-auto flex max-w-6xl items-center justify-between px-6 py-5">
-        <img src={logo.url} alt="Roket" className="h-10" />
+        <img src="/logo.png" alt="Roket" className="h-10" />
         <nav className="flex items-center gap-2">
           {loading ? null : user ? (
             <>
