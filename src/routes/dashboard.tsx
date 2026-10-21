@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import type { User } from "@supabase/supabase-js";
 import { toast } from "sonner";
@@ -56,7 +56,8 @@ function DashboardContent() {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
   const [profileError, setProfileError] = useState("");
-  const [reloadKey, setReloadKey] = useState(0);
+  const [refreshingProfile, setRefreshingProfile] = useState(false);
+  const requestId = useRef(0);
   const [adOpen, setAdOpen] = useState(false);
   const [adSecondsLeft, setAdSecondsLeft] = useState(AD_SECONDS);
   const [adClaiming, setAdClaiming] = useState(false);
@@ -68,81 +69,103 @@ function DashboardContent() {
   const [withdrawAmount, setWithdrawAmount] = useState("");
   const [withdrawBusy, setWithdrawBusy] = useState(false);
 
-  useEffect(() => {
-    let active = true;
+  // Stable profile fetcher. It lives OUTSIDE the mount effect so the Retry
+  // button can call it directly; the effect below only kicks off the first run.
+  // requestId drops stale responses when Retry is clicked repeatedly.
+  const fetchProfile = useCallback(async () => {
+    const id = ++requestId.current;
+    setRefreshingProfile(true);
+    setProfileError("");
 
-    const load = async () => {
-      setLoading(true);
-      setProfileError("");
-
+    try {
       const {
         data: { user: currentUser },
+        error: userError,
       } = await supabase.auth.getUser();
-      if (!active) return;
+      if (id !== requestId.current) return;
 
+      if (userError) console.error("[dashboard] auth.getUser failed", userError);
       setUser(currentUser);
 
-      if (currentUser) {
-        // The KYC gate depends on this row, so read it before rendering the
-        // dashboard (and never open the KYC modal until it has been read).
-        const { data, error: profileFetchError } = await supabase
-          .from("profiles")
-          .select("*")
-          .eq("id", currentUser.id)
-          .maybeSingle();
-        if (!active) return;
-
-        console.log("[dashboard] profile fetch", {
-          userId: currentUser.id,
-          kyc_status: data?.kyc_status ?? null,
-          error: profileFetchError?.message ?? null,
-        });
-
-        if (profileFetchError) {
-          console.error("[dashboard] profile fetch failed", {
-            userId: currentUser.id,
-            message: profileFetchError.message,
-            code: profileFetchError.code,
-            details: profileFetchError.details,
-            hint: profileFetchError.hint,
-          });
-          setProfile(null);
-          setProfileError(profileFetchError.message);
-        } else {
-          setProfile(data);
-        }
-
-        setLoading(false);
-
-        const { data: earnings } = await supabase
-          .from("transactions")
-          .select("id,amount,created_at")
-          .eq("user_id", currentUser.id)
-          .eq("type", "ad_earning")
-          .order("created_at", { ascending: false })
-          .limit(5);
-        if (!active) return;
-        if (earnings) setAdEarnings(earnings as AdEarning[]);
-
-        const { data: team } = await supabase
-          .from("profiles")
-          .select("id,full_name,created_at")
-          .eq("referred_by", currentUser.id)
-          .order("created_at", { ascending: false });
-        if (!active) return;
-        if (team) setReferrals(team as ReferralMember[]);
+      if (!currentUser) {
+        setProfile(null);
+        setProfileError("You are not signed in. Please log in again.");
         return;
       }
 
-      if (active) setLoading(false);
-    };
+      // The KYC gate depends on this row, so read it before rendering the
+      // dashboard (and never open the KYC modal until it has been read).
+      const { data, error: profileFetchError } = await supabase
+        .from("profiles")
+        .select("*")
+        .eq("id", currentUser.id)
+        .maybeSingle();
+      if (id !== requestId.current) return;
 
-    load();
+      console.log("[dashboard] profile fetch", {
+        userId: currentUser.id,
+        kyc_status: data?.kyc_status ?? null,
+        error: profileFetchError?.message ?? null,
+      });
 
-    return () => {
-      active = false;
-    };
-  }, [reloadKey]);
+      if (profileFetchError) {
+        console.error("[dashboard] profile fetch failed", {
+          userId: currentUser.id,
+          message: profileFetchError.message,
+          code: profileFetchError.code,
+          details: profileFetchError.details,
+          hint: profileFetchError.hint,
+        });
+        setProfile(null);
+        setProfileError(profileFetchError.message);
+        return;
+      }
+
+      setProfile(data);
+
+      if (!data) {
+        // No error but no row: either it does not exist, or RLS is hiding it.
+        console.error("[dashboard] profile row missing or not visible", {
+          userId: currentUser.id,
+          hint: "Check the profiles SELECT policy (auth.uid() = id) and that the row exists.",
+        });
+        setProfileError(`No profile record is visible for your account (${currentUser.id}).`);
+        return;
+      }
+
+      // Secondary dashboard data — failures here must not block the page.
+      const { data: earnings } = await supabase
+        .from("transactions")
+        .select("id,amount,created_at")
+        .eq("user_id", currentUser.id)
+        .eq("type", "ad_earning")
+        .order("created_at", { ascending: false })
+        .limit(5);
+      if (id !== requestId.current) return;
+      if (earnings) setAdEarnings(earnings as AdEarning[]);
+
+      const { data: team } = await supabase
+        .from("profiles")
+        .select("id,full_name,created_at")
+        .eq("referred_by", currentUser.id)
+        .order("created_at", { ascending: false });
+      if (id !== requestId.current) return;
+      if (team) setReferrals(team as ReferralMember[]);
+    } catch (err) {
+      if (id !== requestId.current) return;
+      console.error("[dashboard] fetchProfile threw", err);
+      setProfileError(err instanceof Error ? err.message : "Couldn't load your profile.");
+    } finally {
+      if (id === requestId.current) {
+        setRefreshingProfile(false);
+        setLoading(false);
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    void fetchProfile();
+  }, [fetchProfile]);
 
   const signOut = async () => {
     const { error } = await supabase.auth.signOut();
@@ -152,8 +175,6 @@ function DashboardContent() {
     }
     navigate({ to: "/login", replace: true });
   };
-
-  const reloadProfile = () => setReloadKey((key) => key + 1);
 
   const fullName =
     profile?.full_name ??
@@ -426,10 +447,11 @@ function DashboardContent() {
             </p>
             <button
               type="button"
-              onClick={reloadProfile}
-              className="mt-3 rounded-lg border border-border px-4 py-2 text-sm font-semibold text-foreground transition-colors hover:border-primary hover:text-primary"
+              onClick={() => void fetchProfile()}
+              disabled={refreshingProfile}
+              className="mt-3 rounded-lg border border-border px-4 py-2 text-sm font-semibold text-foreground transition-colors hover:border-primary hover:text-primary disabled:cursor-not-allowed disabled:opacity-60"
             >
-              Retry
+              {refreshingProfile ? "Retrying…" : "Retry"}
             </button>
           </div>
         )}
