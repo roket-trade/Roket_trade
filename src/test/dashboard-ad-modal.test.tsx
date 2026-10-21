@@ -2,7 +2,9 @@ import type { ComponentType, ReactNode } from "react";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { Route } from "@/routes/dashboard";
+// Side-effect import: evaluating the route module registers its component with
+// the createFileRoute mock below.
+import "@/routes/dashboard";
 
 const { mockUser, mockProfile } = vi.hoisted(() => ({
   mockUser: {
@@ -137,6 +139,3 @@ describe("Watch Ads & Earn modal", () => {
     expect(document.querySelectorAll(`script[src="${AD_SRC}"]`)).toHaveLength(1);
   });
 });
-
-// The route options object is the only way dashboard.tsx exposes its component.
-void Route;
