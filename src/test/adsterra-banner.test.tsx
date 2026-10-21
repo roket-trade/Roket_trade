@@ -34,11 +34,14 @@ describe("AdsterraBanner", () => {
     expect(scripts).toHaveLength(2);
 
     const [optionsScript, loaderScript] = scripts;
-    expect(optionsScript?.textContent).toContain(`'key' : '${AD_KEY}'`);
-    expect(optionsScript?.textContent).toContain("'format' : 'iframe'");
-    expect(optionsScript?.textContent).toContain("'height' : 250");
-    expect(optionsScript?.textContent).toContain("'width' : 300");
-    expect(optionsScript?.textContent).toContain("'params' : {}");
+    // Exact payload the Adsterra loader expects.
+    expect(optionsScript?.textContent).toBe(`atOptions = {
+  'key' : '${AD_KEY}',
+  'format' : 'iframe',
+  'height' : 250,
+  'width' : 300,
+  'params' : {}
+};`);
     expect(optionsScript?.getAttribute("src")).toBeNull();
 
     expect(loaderScript?.getAttribute("src")).toBe(AD_SRC);
