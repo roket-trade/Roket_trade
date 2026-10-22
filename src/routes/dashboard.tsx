@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import type { User } from "@supabase/supabase-js";
 import type { ApexOptions } from "apexcharts";
-import { TrendingDown, TrendingUp } from "lucide-react";
+import { Bell, Gift, Mail, Send, Ticket, TrendingDown, TrendingUp } from "lucide-react";
 import { toast } from "sonner";
 import { AdsterraBanner } from "@/components/AdsterraBanner";
 import { HilltopVideoAd } from "@/components/HilltopVideoAd";
@@ -1482,24 +1482,81 @@ function DashboardContent() {
               />
             </div>
 
-            <div className="mt-6 grid gap-4 sm:grid-cols-2">
-              <section className="rounded-2xl border bg-card p-5">
-                <p className="text-xs uppercase tracking-widest text-muted-foreground">
-                  Deposit status
-                </p>
-                <p className="mt-3 text-sm text-muted-foreground">
-                  After you submit a transaction hash, it stays pending until an admin confirms it
-                  on-chain.
-                </p>
+            <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+              <section className="rounded-2xl border border-gray-800 border-l-4 border-l-blue-500 bg-gray-900/50 p-5 backdrop-blur">
+                <div className="flex items-center gap-2">
+                  <Bell className="h-4 w-4 text-blue-400" aria-hidden="true" />
+                  <h2 className="text-sm font-semibold text-white">Notification</h2>
+                </div>
+                <div className="mt-3 h-24 overflow-y-auto rounded bg-gray-950/50 p-3">
+                  <ul className="space-y-3">
+                    <li className="flex items-start gap-2.5 text-xs">
+                      <Bell
+                        className="mt-0.5 h-3.5 w-3.5 shrink-0 text-blue-400"
+                        aria-hidden="true"
+                      />
+                      <span className="text-muted-foreground">
+                        System maintenance scheduled for Oct 25, 02:00 UTC
+                      </span>
+                    </li>
+                    <li className="flex items-start gap-2.5 text-xs">
+                      <Gift
+                        className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-400"
+                        aria-hidden="true"
+                      />
+                      <span className="text-muted-foreground">
+                        Referral bonus increased to 10% for a limited time!
+                      </span>
+                    </li>
+                    <li className="flex items-start gap-2.5 text-xs">
+                      <Bell
+                        className="mt-0.5 h-3.5 w-3.5 shrink-0 text-blue-400"
+                        aria-hidden="true"
+                      />
+                      <span className="text-muted-foreground">
+                        Daily plan profits are distributed at 00:00 UTC.
+                      </span>
+                    </li>
+                  </ul>
+                </div>
               </section>
-              <section className="rounded-2xl border bg-card p-5">
-                <p className="text-xs uppercase tracking-widest text-muted-foreground">
-                  Need help?
-                </p>
-                <p className="mt-3 text-sm text-muted-foreground">
-                  Reach out through the support links in the footer if your deposit takes longer
-                  than usual.
-                </p>
+
+              <section className="rounded-2xl border border-gray-800 border-l-4 border-l-rose-500 bg-gray-900/50 p-5 backdrop-blur">
+                <div className="flex items-center gap-2">
+                  <Mail className="h-4 w-4 text-rose-400" aria-hidden="true" />
+                  <h2 className="text-sm font-semibold text-white">Need Help?</h2>
+                </div>
+                <ul className="mt-2 space-y-1">
+                  <li>
+                    <a
+                      href="https://t.me/roket_trade"
+                      target="_blank"
+                      rel="noreferrer"
+                      className="flex items-center gap-3 rounded-lg px-2 py-2 text-sm text-muted-foreground transition hover:bg-gray-950/60 hover:text-blue-400"
+                    >
+                      <Send className="h-4 w-4 text-blue-400" aria-hidden="true" />
+                      <span>Message on Telegram</span>
+                    </a>
+                  </li>
+                  <li>
+                    <a
+                      href="mailto:info@roket.bond?subject=Support%20Ticket"
+                      className="flex items-center gap-3 rounded-lg px-2 py-2 text-sm text-muted-foreground transition hover:bg-gray-950/60 hover:text-emerald-400"
+                    >
+                      <Ticket className="h-4 w-4 text-emerald-400" aria-hidden="true" />
+                      <span>Submit A Ticket</span>
+                    </a>
+                  </li>
+                  <li>
+                    <a
+                      href="mailto:info@roket.bond"
+                      className="flex items-center gap-3 rounded-lg px-2 py-2 text-sm text-muted-foreground transition hover:bg-gray-950/60 hover:text-rose-400"
+                    >
+                      <Mail className="h-4 w-4 text-rose-400" aria-hidden="true" />
+                      <span>Email Us: info@roket.bond</span>
+                    </a>
+                  </li>
+                </ul>
               </section>
             </div>
           </>

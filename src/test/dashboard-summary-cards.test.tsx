@@ -239,6 +239,31 @@ describe("Dashboard top summary cards", () => {
     expect(bottomGrid?.className).toContain("md:grid-cols-2");
     expect(bottomGrid?.children).toHaveLength(4);
 
+    // Footer notification + help boxes.
+    const notification = screen.getByRole("heading", { name: "Notification" }).closest("section");
+    expect(notification?.className).toContain("border-l-blue-500");
+    expect(
+      screen.getByText("System maintenance scheduled for Oct 25, 02:00 UTC"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Referral bonus increased to 10% for a limited time!"),
+    ).toBeInTheDocument();
+
+    const help = screen.getByRole("heading", { name: "Need Help?" }).closest("section");
+    expect(help?.className).toContain("border-l-rose-500");
+    expect(screen.getByRole("link", { name: "Message on Telegram" })).toHaveAttribute(
+      "href",
+      "https://t.me/roket_trade",
+    );
+    expect(screen.getByRole("link", { name: "Submit A Ticket" })).toHaveAttribute(
+      "href",
+      "mailto:info@roket.bond?subject=Support%20Ticket",
+    );
+    expect(screen.getByRole("link", { name: "Email Us: info@roket.bond" })).toHaveAttribute(
+      "href",
+      "mailto:info@roket.bond",
+    );
+
     // Set Wallet opens the modal prefilled and saves through Supabase.
     fireEvent.click(screen.getByRole("button", { name: "Set Wallet" }));
     const walletDialog = screen.getByRole("dialog", { name: "Set Wallet" });
