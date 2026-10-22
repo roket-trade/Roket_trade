@@ -49,6 +49,13 @@ type LatestWithdraw = {
   wallet_address: string | null;
 };
 
+type RecentWithdrawal = {
+  id: string;
+  amount: number | string;
+  created_at: string;
+  status: string | null;
+};
+
 type DashboardSummary = {
   adReward: number;
   referralBonus: number;
@@ -362,6 +369,309 @@ function PlatformProfitLossPanel({ stats }: { stats: PlatformStats }) {
   );
 }
 
+function AdsRewardCard({
+  earnings,
+  onWatchAds,
+}: {
+  earnings: AdEarning[];
+  onWatchAds: () => void;
+}) {
+  return (
+    <section className="rounded-2xl border border-gray-800 bg-gray-900/50 p-5 backdrop-blur">
+      <div className="flex items-center justify-between gap-3">
+        <h2 className="text-sm font-semibold uppercase tracking-widest text-blue-400">
+          Ads Reward
+        </h2>
+        <span className="rounded-full border border-blue-500/25 bg-blue-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-blue-300">
+          Earn
+        </span>
+      </div>
+
+      <button
+        type="button"
+        onClick={onWatchAds}
+        className="mt-4 w-full rounded-xl bg-gradient-to-r from-emerald-400 to-cyan-400 px-4 py-2.5 text-sm font-bold text-gray-950 shadow-[0_0_20px_rgba(52,211,153,0.35)] transition hover:brightness-110"
+      >
+        Watch Ads
+      </button>
+
+      <p className="mt-5 text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+        Latest 5 Rewards
+      </p>
+      <ul className="mt-2 divide-y divide-gray-800">
+        {earnings.length === 0 ? (
+          <li className="py-3 text-xs text-muted-foreground">
+            No rewards yet — watch your first ad.
+          </li>
+        ) : (
+          earnings.map((row) => (
+            <li key={row.id} className="flex items-center justify-between gap-2 py-2 text-xs">
+              <span className="text-muted-foreground">
+                {new Date(row.created_at).toLocaleString("en-US", {
+                  month: "short",
+                  day: "numeric",
+                  hour: "numeric",
+                  minute: "2-digit",
+                })}
+              </span>
+              <span className="font-semibold text-emerald-400">
+                +{money(Number(row.amount) || 0)}
+              </span>
+            </li>
+          ))
+        )}
+      </ul>
+    </section>
+  );
+}
+
+function ReferralCard({
+  code,
+  link,
+  referrals,
+  onCopy,
+}: {
+  code: string;
+  link: string;
+  referrals: ReferralMember[];
+  onCopy: () => void;
+}) {
+  return (
+    <section className="rounded-2xl border border-gray-800 bg-gray-900/50 p-5 backdrop-blur">
+      <div className="flex items-center justify-between gap-3">
+        <h2 className="text-sm font-semibold uppercase tracking-widest text-blue-400">Referral</h2>
+        <span className="rounded-full border border-blue-500/25 bg-blue-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-blue-300">
+          10%
+        </span>
+      </div>
+
+      <p className="mt-4 text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+        Your code
+      </p>
+      <div className="mt-1 flex items-center justify-between gap-2 rounded-lg border border-gray-800 bg-gray-950/50 px-3 py-2">
+        <span className="font-mono text-sm font-bold text-emerald-400">{code || "—"}</span>
+        <button
+          type="button"
+          onClick={onCopy}
+          disabled={!link}
+          className="rounded-md border border-gray-700 px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-gray-300 transition hover:border-emerald-400 hover:text-emerald-400 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          Copy
+        </button>
+      </div>
+      <p className="mt-2 break-all font-mono text-[10px] leading-relaxed text-muted-foreground">
+        {link || "—"}
+      </p>
+
+      <p className="mt-5 text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+        Latest 5 Referrals
+      </p>
+      <ul className="mt-2 divide-y divide-gray-800">
+        {referrals.length === 0 ? (
+          <li className="py-3 text-xs text-muted-foreground">No referrals yet.</li>
+        ) : (
+          referrals.map((member) => (
+            <li key={member.id} className="flex items-center justify-between gap-2 py-2 text-xs">
+              <span className="truncate text-foreground">{member.full_name || "Member"}</span>
+              <span className="shrink-0 text-[10px] text-muted-foreground">
+                {new Date(member.created_at).toLocaleDateString("en-US", {
+                  month: "short",
+                  day: "numeric",
+                  year: "numeric",
+                })}
+              </span>
+            </li>
+          ))
+        )}
+      </ul>
+    </section>
+  );
+}
+
+function WithdrawCard({
+  available,
+  withdrawals,
+  locked,
+  lockedReason,
+  onWithdraw,
+  onSetWallet,
+}: {
+  available: number;
+  withdrawals: RecentWithdrawal[];
+  locked: boolean;
+  lockedReason: string;
+  onWithdraw: () => void;
+  onSetWallet: () => void;
+}) {
+  return (
+    <section className="rounded-2xl border border-gray-800 bg-gray-900/50 p-5 backdrop-blur">
+      <div className="flex items-center justify-between gap-3">
+        <h2 className="text-sm font-semibold uppercase tracking-widest text-blue-400">Withdraw</h2>
+        <span className="rounded-full border border-blue-500/25 bg-blue-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-blue-300">
+          7d
+        </span>
+      </div>
+
+      <div className="mt-4 grid grid-cols-2 gap-2">
+        <button
+          type="button"
+          onClick={onWithdraw}
+          className="rounded-xl bg-gradient-to-r from-blue-500 to-emerald-400 px-3 py-2.5 text-xs font-bold text-gray-950 shadow-[0_0_18px_rgba(59,130,246,0.3)] transition hover:brightness-110"
+        >
+          Withdraw Now
+        </button>
+        <button
+          type="button"
+          onClick={onSetWallet}
+          className="rounded-xl border border-blue-500/40 px-3 py-2.5 text-xs font-semibold text-blue-300 transition hover:bg-blue-500/10"
+        >
+          Set Wallet
+        </button>
+      </div>
+
+      <div className="mt-4 rounded-lg border border-gray-800 bg-gray-950/50 p-3">
+        <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+          Available Withdrawal Amount
+        </p>
+        <p className="mt-1 font-display text-2xl font-bold text-emerald-400">{money(available)}</p>
+        <p className="mt-1 text-[10px] text-muted-foreground">Main + Extra balance</p>
+      </div>
+
+      {locked && lockedReason ? (
+        <p className="mt-2 text-[11px] font-semibold text-amber-500">{lockedReason}</p>
+      ) : null}
+
+      <p className="mt-5 text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+        Latest 5 Withdrawals
+      </p>
+      <ul className="mt-2 divide-y divide-gray-800">
+        {withdrawals.length === 0 ? (
+          <li className="py-3 text-xs text-muted-foreground">No withdrawals yet.</li>
+        ) : (
+          withdrawals.map((row) => (
+            <li key={row.id} className="flex items-center justify-between gap-2 py-2 text-xs">
+              <span className="text-muted-foreground">
+                {new Date(row.created_at).toLocaleDateString("en-US", {
+                  month: "short",
+                  day: "numeric",
+                  year: "numeric",
+                })}
+              </span>
+              <span className="font-semibold text-rose-400">
+                -{money(Math.abs(Number(row.amount) || 0))}
+              </span>
+            </li>
+          ))
+        )}
+      </ul>
+
+      <p className="mt-3 text-[10px] text-muted-foreground">One withdrawal every 7 days.</p>
+    </section>
+  );
+}
+
+function UserControlCard({
+  email,
+  phone,
+  planName,
+  deposit,
+  dailyProfit,
+  totalProfit,
+  duration,
+  onCancelPlan,
+  onLogout,
+}: {
+  email: string;
+  phone: string | null;
+  planName: string | null;
+  deposit: number;
+  dailyProfit: number;
+  totalProfit: number;
+  duration: string;
+  onCancelPlan: () => void;
+  onLogout: () => void;
+}) {
+  return (
+    <section className="rounded-2xl border border-gray-800 bg-gray-900/50 p-5 backdrop-blur">
+      <div className="flex items-center justify-between gap-3">
+        <h2 className="text-sm font-semibold uppercase tracking-widest text-blue-400">
+          User Control
+        </h2>
+        <span className="rounded-full border border-blue-500/25 bg-blue-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-blue-300">
+          Account
+        </span>
+      </div>
+
+      <dl className="mt-4 space-y-3 text-xs">
+        <div>
+          <dt className="text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+            Email
+          </dt>
+          <dd className="mt-0.5 truncate text-foreground">{email || "—"}</dd>
+        </div>
+        <div>
+          <dt className="text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+            Phone Number
+          </dt>
+          <dd className="mt-0.5 truncate text-foreground">{phone?.trim() || "Not set"}</dd>
+        </div>
+      </dl>
+
+      <div className="mt-4 rounded-lg border border-gray-800 bg-gray-950/50 p-3">
+        <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+          Plan Summary
+        </p>
+        <dl className="mt-2 space-y-1.5 text-[11px]">
+          <div className="flex items-center justify-between gap-2">
+            <dt className="text-muted-foreground">Plan</dt>
+            <dd className="font-semibold text-foreground">{planName ?? "No active plan"}</dd>
+          </div>
+          <div className="flex items-center justify-between gap-2">
+            <dt className="text-muted-foreground">Deposit</dt>
+            <dd className="font-semibold text-foreground">{money(deposit)}</dd>
+          </div>
+          <div className="flex items-center justify-between gap-2">
+            <dt className="text-muted-foreground">Daily Profit</dt>
+            <dd className="font-semibold text-emerald-400">+{money(dailyProfit)}</dd>
+          </div>
+          <div className="flex items-center justify-between gap-2">
+            <dt className="text-muted-foreground">Total Profit</dt>
+            <dd className="font-semibold text-emerald-400">+{money(totalProfit)}</dd>
+          </div>
+          <div className="flex items-center justify-between gap-2">
+            <dt className="text-muted-foreground">Duration</dt>
+            <dd className="font-semibold text-foreground">{duration}</dd>
+          </div>
+        </dl>
+      </div>
+
+      <div className="mt-4 space-y-2">
+        <Link
+          to="/"
+          hash="pricing"
+          className="block rounded-xl bg-gradient-to-r from-emerald-400 to-cyan-400 px-3 py-2 text-center text-xs font-bold text-gray-950 shadow-[0_0_18px_rgba(52,211,153,0.3)] transition hover:brightness-110"
+        >
+          Upgrade Plan
+        </Link>
+        <button
+          type="button"
+          onClick={onCancelPlan}
+          className="w-full rounded-xl border border-rose-500/50 px-3 py-2 text-xs font-semibold text-rose-400 transition hover:bg-rose-500/10"
+        >
+          Cancel Plan
+        </button>
+        <button
+          type="button"
+          onClick={onLogout}
+          className="w-full rounded-xl border border-gray-700 px-3 py-2 text-xs font-semibold text-muted-foreground transition hover:text-foreground"
+        >
+          Logout
+        </button>
+      </div>
+    </section>
+  );
+}
+
 function Dashboard() {
   return (
     <RequireAuth>
@@ -384,6 +694,8 @@ function DashboardContent() {
   const [adClaiming, setAdClaiming] = useState(false);
   const [adEarnings, setAdEarnings] = useState<AdEarning[]>([]);
   const [referrals, setReferrals] = useState<ReferralMember[]>([]);
+  const [recentWithdrawals, setRecentWithdrawals] = useState<RecentWithdrawal[]>([]);
+  const [planTotalProfit, setPlanTotalProfit] = useState(0);
   const [summary, setSummary] = useState<DashboardSummary>(EMPTY_SUMMARY);
   const [platformStats, setPlatformStats] = useState<PlatformStats>(EMPTY_PLATFORM_STATS);
   const [withdrawOpen, setWithdrawOpen] = useState(false);
@@ -391,6 +703,9 @@ function DashboardContent() {
   const [withdrawAddress, setWithdrawAddress] = useState("");
   const [withdrawAmount, setWithdrawAmount] = useState("");
   const [withdrawBusy, setWithdrawBusy] = useState(false);
+  const [walletOpen, setWalletOpen] = useState(false);
+  const [walletInput, setWalletInput] = useState("");
+  const [walletBusy, setWalletBusy] = useState(false);
 
   // Stable profile fetcher. It lives OUTSIDE the mount effect so the Retry
   // button can call it directly; the effect below only kicks off the first run.
@@ -457,27 +772,17 @@ function DashboardContent() {
       }
 
       // Secondary dashboard data — failures here must not block the page.
-      const { data: earnings } = await supabase
-        .from("transactions")
-        .select("id,amount,created_at")
-        .eq("user_id", currentUser.id)
-        .eq("type", "ad_earning")
-        .order("created_at", { ascending: false })
-        .limit(5);
-      if (id !== requestId.current) return;
-      if (earnings) setAdEarnings(earnings as AdEarning[]);
-
-      const { data: team } = await supabase
-        .from("profiles")
-        .select("id,full_name,created_at")
-        .eq("referred_by", currentUser.id)
-        .order("created_at", { ascending: false });
-      if (id !== requestId.current) return;
-      if (team) setReferrals(team as ReferralMember[]);
-
-      // Aggregates for the top cards. Supabase has no client-side SUM, so the
-      // amounts are summed here; failures fall back to empty lists.
-      const [adRows, bonusRows, withdrawalRows, depositRows] = await Promise.all([
+      // All recent-list queries + aggregates run in one parallel batch.
+      const [
+        adRows,
+        bonusRows,
+        withdrawalRows,
+        depositRows,
+        adEarningsRows,
+        referralRows,
+        recentWithdrawalRows,
+        dailyProfitRows,
+      ] = await Promise.all([
         supabase
           .from("transactions")
           .select("amount")
@@ -503,6 +808,31 @@ function DashboardContent() {
           .eq("status", "completed")
           .order("created_at", { ascending: false })
           .limit(1),
+        supabase
+          .from("transactions")
+          .select("id,amount,created_at")
+          .eq("user_id", currentUser.id)
+          .eq("type", "ad_earning")
+          .order("created_at", { ascending: false })
+          .limit(5),
+        supabase
+          .from("profiles")
+          .select("id,full_name,created_at")
+          .eq("referred_by", currentUser.id)
+          .order("created_at", { ascending: false })
+          .limit(5),
+        supabase
+          .from("transactions")
+          .select("id,amount,created_at,status")
+          .eq("user_id", currentUser.id)
+          .eq("type", "withdrawal")
+          .order("created_at", { ascending: false })
+          .limit(5),
+        supabase
+          .from("transactions")
+          .select("amount")
+          .eq("user_id", currentUser.id)
+          .eq("type", "daily_profit"),
       ]);
       if (id !== requestId.current) return;
 
@@ -542,6 +872,15 @@ function DashboardContent() {
             }
           : null,
       });
+
+      setAdEarnings((adEarningsRows.data ?? []) as AdEarning[]);
+      setReferrals((referralRows.data ?? []) as ReferralMember[]);
+      setRecentWithdrawals((recentWithdrawalRows.data ?? []) as RecentWithdrawal[]);
+      const dailyProfitTotal = (dailyProfitRows.data ?? []).reduce(
+        (total, row) => total + Number((row as { amount?: number | string | null }).amount ?? 0),
+        0,
+      );
+      setPlanTotalProfit(round2(Math.max(0, dailyProfitTotal)));
     } catch (err) {
       if (id !== requestId.current) return;
       console.error("[dashboard] fetchProfile threw", err);
@@ -579,11 +918,12 @@ function DashboardContent() {
       ? user.user_metadata["full_name"]
       : "Trader");
   const email = user?.email ?? "";
-  // Referral code = user id (short display, full id in link).
-  const referralCode = user?.id ? `${user.id.slice(0, 8).toUpperCase()}` : "";
+  // Prefer the profile's saved referral code; fall back to the short user id.
+  const referralCode =
+    profile?.referral_code ?? (user?.id ? user.id.slice(0, 8).toUpperCase() : "");
   const referralLink =
-    user?.id && typeof window !== "undefined"
-      ? `https://roket.bond/signup?ref=${user.id}`
+    referralCode && typeof window !== "undefined"
+      ? `https://roket.bond/signup?ref=${referralCode}`
       : "";
   const memberSince = profile?.created_at ?? user?.created_at;
   // The KYC gate is only trustworthy once the profile row has been read:
@@ -835,6 +1175,47 @@ function DashboardContent() {
     }
   };
 
+  const openWallet = () => {
+    setWalletInput(profile?.default_wallet_address ?? "");
+    setWalletOpen(true);
+  };
+
+  const saveWallet = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user || walletBusy) return;
+    const address = walletInput.trim();
+    if (!address) {
+      toast.error("Enter your wallet address.");
+      return;
+    }
+    setWalletBusy(true);
+    try {
+      const { error } = await supabase
+        .from("profiles")
+        .update({ default_wallet_address: address })
+        .eq("id", user.id);
+      if (error) {
+        const message = /column .*default_wallet_address/i.test(error.message)
+          ? "Please run the dashboard profile migration first (default_wallet_address missing)."
+          : error.message;
+        throw new Error(message);
+      }
+      setProfile((current) =>
+        current ? { ...current, default_wallet_address: address } : current,
+      );
+      setWalletOpen(false);
+      toast.success("Default wallet saved.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't save your wallet.");
+    } finally {
+      setWalletBusy(false);
+    }
+  };
+
+  const requestCancelPlan = () => {
+    toast.info("Plan cancellation is reviewed by support. Please contact support to proceed.");
+  };
+
   return (
     <div className="min-h-screen bg-background">
       <header className="border-b border-border/70">
@@ -1072,168 +1453,34 @@ function DashboardContent() {
               </p>
             </section>
 
-            <section className="mt-6 rounded-2xl border bg-card p-5">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                  <p className="text-xs uppercase tracking-widest text-muted-foreground">
-                    Your referral code
-                  </p>
-                  <p className="mt-2 font-display text-2xl font-bold tracking-[0.15em] text-primary">
-                    {referralCode || user?.id?.slice(0, 8).toUpperCase() || "—"}
-                  </p>
-                  {referralLink && (
-                    <code className="mt-2 block break-all rounded-lg border bg-muted px-3 py-2 text-xs text-muted-foreground">
-                      {referralLink}
-                    </code>
-                  )}
-                  <p className="mt-2 text-xs text-muted-foreground">
-                    Share this link — new signups credit you as referrer.
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={copyReferral}
-                  disabled={!referralLink}
-                  className="rounded-lg border border-primary px-4 py-2 text-sm font-semibold text-primary transition-colors hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  Copy link
-                </button>
-              </div>
-              <div className="mt-4 rounded-xl border border-border/60 bg-background/60 p-4">
-                <div className="flex items-center justify-between gap-3">
-                  <p className="text-xs uppercase tracking-widest text-muted-foreground">
-                    My Referrals ({referrals.length})
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    10% deposit bonus lands here after admin approval (coming next).
-                  </p>
-                </div>
-                {referrals.length === 0 ? (
-                  <p className="mt-2 text-sm text-muted-foreground">
-                    No referrals yet. Share your link above to grow your team.
-                  </p>
-                ) : (
-                  <ul className="mt-2 divide-y divide-border/60">
-                    {referrals.map((member) => (
-                      <li key={member.id} className="flex items-center justify-between py-2 text-sm">
-                        <span className="font-medium">{member.full_name || "Member"}</span>
-                        <span className="text-muted-foreground">
-                          {new Date(member.created_at).toLocaleDateString("en-US", {
-                            month: "short",
-                            day: "numeric",
-                            year: "numeric",
-                          })}
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-            </section>
-
-            <section className="mt-6 rounded-2xl border border-fuchsia-500/40 bg-card p-6 shadow-glow">
-              <div className="flex flex-wrap items-center justify-between gap-5">
-                <div>
-                  <p className="text-xs uppercase tracking-widest text-fuchsia-300">
-                    Extra Income
-                  </p>
-                  <h2 className="mt-1 font-display text-2xl font-bold">
-                    Watch Ads &amp; Earn
-                  </h2>
-                  <p className="mt-2 max-w-xl text-sm text-muted-foreground">
-                    Watch a 15-second ad and claim $0.05 to your Extra Balance.
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={openAd}
-                  className="inline-flex items-center justify-center rounded-lg bg-brand px-6 py-3 font-display font-bold text-primary-foreground shadow-glow transition-transform hover:scale-105"
-                >
-                  Watch Ads
-                </button>
-              </div>
-            <div className="mt-4 rounded-xl border border-border/60 bg-background/60 p-4">
-              <p className="text-xs uppercase tracking-widest text-muted-foreground">
-                Recent ad earnings
-              </p>
-              {adEarnings.length === 0 ? (
-                <p className="mt-2 text-sm text-muted-foreground">
-                  No ad earnings yet. Watch your first ad to earn $0.05.
-                </p>
-              ) : (
-                <ul className="mt-2 divide-y divide-border/60">
-                  {adEarnings.map((row) => (
-                    <li key={row.id} className="flex items-center justify-between py-2 text-sm">
-                      <span className="text-muted-foreground">
-                        {new Date(row.created_at).toLocaleString("en-US", {
-                          month: "short",
-                          day: "numeric",
-                          year: "numeric",
-                          hour: "numeric",
-                          minute: "2-digit",
-                        })}
-                      </span>
-                      <span className="font-display font-bold text-emerald-500">
-                        +{money(Number(row.amount) || 0)}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              )}
+            <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
+              <AdsRewardCard earnings={adEarnings} onWatchAds={openAd} />
+              <ReferralCard
+                code={referralCode}
+                link={referralLink}
+                referrals={referrals}
+                onCopy={copyReferral}
+              />
+              <WithdrawCard
+                available={totalBalance}
+                withdrawals={recentWithdrawals}
+                locked={withdrawLocked}
+                lockedReason={withdrawBlockedReason}
+                onWithdraw={openWithdraw}
+                onSetWallet={openWallet}
+              />
+              <UserControlCard
+                email={email}
+                phone={profile?.phone_number ?? null}
+                planName={activePlanName}
+                deposit={investmentAmount}
+                dailyProfit={dailyEarning}
+                totalProfit={planTotalProfit}
+                duration={`${PLAN_TOTAL_DAYS} Days`}
+                onCancelPlan={requestCancelPlan}
+                onLogout={signOut}
+              />
             </div>
-            </section>
-
-            <section className="mt-6 rounded-2xl border border-emerald-500/40 bg-card p-6 shadow-glow">
-              <div className="flex flex-wrap items-center justify-between gap-5">
-                <div>
-                  <p className="text-xs uppercase tracking-widest text-emerald-300">
-                    Withdraw
-                  </p>
-                  <h2 className="mt-1 font-display text-2xl font-bold">
-                    Withdraw Funds
-                  </h2>
-                  <p className="mt-2 max-w-xl text-sm text-muted-foreground">
-                    Total available {money(totalBalance)} (Main {money(mainBalance)} + Extra{" "}
-                    {money(extraBalance)}). One withdrawal every 7 days, manual review.
-                  </p>
-                  {withdrawLocked && (
-                    <p className="mt-2 text-sm font-semibold text-amber-500">
-                      {withdrawBlockedReason}
-                    </p>
-                  )}
-                </div>
-                <button
-                  type="button"
-                  onClick={openWithdraw}
-                  className="inline-flex items-center justify-center rounded-lg bg-brand px-6 py-3 font-display font-bold text-primary-foreground shadow-glow transition-transform hover:scale-105"
-                >
-                  Withdraw
-                </button>
-              </div>
-            </section>
-
-            <section className="mt-6 rounded-2xl border border-primary/40 bg-card p-6 shadow-glow">
-              <div className="flex flex-wrap items-center justify-between gap-5">
-                <div>
-                  <p className="text-xs uppercase tracking-widest text-muted-foreground">
-                    Next step
-                  </p>
-                  <h2 className="mt-1 font-display text-2xl font-bold">
-                    Choose a plan to start earning
-                  </h2>
-                  <p className="mt-2 max-w-xl text-sm text-muted-foreground">
-                    Pick a plan and submit your deposit. Payments are reviewed manually.
-                  </p>
-                </div>
-                <Link
-                  to="/"
-                  hash="pricing"
-                  className="inline-flex items-center justify-center rounded-lg bg-brand px-6 py-3 font-display font-bold text-primary-foreground"
-                >
-                  Browse plans
-                </Link>
-              </div>
-            </section>
 
             <div className="mt-6 grid gap-4 sm:grid-cols-2">
               <section className="rounded-2xl border bg-card p-5">
@@ -1258,6 +1505,63 @@ function DashboardContent() {
           </>
         )}
       </main>
+
+      {walletOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="wallet-title"
+            className="w-full max-w-md rounded-2xl border bg-card p-6 shadow-glow"
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.25em] text-primary">
+                  Withdraw
+                </p>
+                <h2 id="wallet-title" className="mt-1 font-display text-xl font-bold">
+                  Set Wallet
+                </h2>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Save the address used to prefill withdrawal requests.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => !walletBusy && setWalletOpen(false)}
+                disabled={walletBusy}
+                aria-label="Close wallet"
+                className="rounded-lg border border-border px-3 py-1.5 text-sm font-semibold text-muted-foreground hover:text-foreground disabled:opacity-50"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={saveWallet} className="mt-4 space-y-4">
+              <div className="space-y-1.5">
+                <label htmlFor="default-wallet" className="text-sm font-medium">
+                  Default Wallet Address
+                </label>
+                <input
+                  id="default-wallet"
+                  value={walletInput}
+                  onChange={(e) => setWalletInput(e.target.value)}
+                  placeholder="0x..."
+                  className="w-full rounded-lg border bg-muted px-4 py-3 text-sm outline-none focus:border-primary"
+                />
+              </div>
+
+              <button
+                type="submit"
+                disabled={walletBusy || !walletInput.trim()}
+                className="w-full rounded-lg bg-brand py-3 font-display font-bold text-primary-foreground shadow-glow disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {walletBusy ? "Saving…" : "Save Wallet"}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
 
       {withdrawOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">

@@ -1,5 +1,5 @@
 import type { ComponentType, ReactNode } from "react";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import "@/routes/dashboard";
@@ -24,7 +24,7 @@ const { mockUser, mockProfile, startDate } = vi.hoisted(() => ({
     is_admin: false,
     address: null,
     last_withdraw_at: null,
-    phone_number: null,
+    phone_number: "+1 555 010 2030",
     default_wallet_address: "0x35aec7E35F65ea227e49fDd321709D52Ada389E4",
     plan_started_at: new Date(Date.now() - 44 * 24 * 60 * 60 * 1000).toISOString(),
     plan_expires_at: new Date(Date.now() + 321 * 24 * 60 * 60 * 1000).toISOString(),
@@ -84,14 +84,18 @@ vi.mock("@/integrations/supabase/client", () => {
         Promise.resolve({ data: table === "profiles" ? mockProfile : null, error: null }),
       then: (resolve: (value: unknown) => unknown) => {
         let data: unknown[] = [];
+        if (table === "profiles" && filters["referred_by"]) {
+          data = [
+            {
+              id: "ref-1",
+              full_name: "Alice Referral",
+              created_at: "2026-09-05T00:00:00.000Z",
+            },
+          ];
+        }
         if (table === "transactions") {
-          if (filters["type"]?.includes("daily_profit")) {
-            const nowIso = new Date().toISOString();
-            data = [
-              { type: "daily_profit", amount: 3, created_at: nowIso },
-              { type: "ad_earning", amount: 1, created_at: nowIso },
-              { type: "referral_bonus", amount: 2.5, created_at: nowIso },
-            ];
+          if (filters["type"] === "daily_profit") {
+            data = [{ amount: 9.5 }];
           } else if (filters["type"] === "ad_earning") {
             data = [
               { id: "ad-1", amount: 0.1, created_at: "2026-09-01T00:00:00.000Z" },
@@ -155,14 +159,14 @@ describe("Dashboard top summary cards", () => {
     expect(await screen.findByText("Total Balance")).toBeInTheDocument();
 
     // Card 1 — total balance + aggregate small rows.
-    expect(screen.getByText("$270.00")).toBeInTheDocument();
+    expect(screen.getAllByText("$270.00").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("+$4.50 / day")).toBeInTheDocument();
     expect(screen.getByText("+$0.15")).toBeInTheDocument();
     expect(screen.getByText("+$12.00")).toBeInTheDocument();
 
     // Card 2 — active plan from the latest completed deposit.
-    expect(screen.getByText("Plan 3")).toBeInTheDocument();
-    expect(screen.getByText("$180.00")).toBeInTheDocument();
+    expect(screen.getAllByText("Plan 3").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("$180.00").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("Day 45 / 365")).toBeInTheDocument();
     const progress = screen.getByRole("progressbar", { name: "Plan progress" });
     expect(progress).toHaveAttribute("aria-valuenow", "45");
@@ -200,6 +204,50 @@ describe("Dashboard top summary cards", () => {
     expect(screen.getByText("-$20,000.00")).toBeInTheDocument();
     expect(screen.getByText("-$92,777.78")).toBeInTheDocument();
     expect(screen.getByText("These are Roket platform statistics.")).toBeInTheDocument();
+
+    // Bottom 4-column grid.
+    expect(screen.getByRole("heading", { name: "Ads Reward" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Watch Ads" })).toBeInTheDocument();
+    expect(screen.getByText("Latest 5 Rewards")).toBeInTheDocument();
+    expect(screen.getByText("+$0.10")).toBeInTheDocument();
+
+    expect(screen.getByRole("heading", { name: "Referral" })).toBeInTheDocument();
+    expect(screen.getByText("TEST1234")).toBeInTheDocument();
+    expect(screen.getByText("Alice Referral")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Copy" })).toBeInTheDocument();
+
+    expect(screen.getByRole("heading", { name: "Withdraw" })).toBeInTheDocument();
+    expect(screen.getByText("Available Withdrawal Amount")).toBeInTheDocument();
+    expect(screen.getByText("Latest 5 Withdrawals")).toBeInTheDocument();
+    expect(screen.getByText("-$50.00")).toBeInTheDocument();
+    expect(screen.getByText("One withdrawal every 7 days.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Withdraw Now" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Set Wallet" })).toBeInTheDocument();
+
+    expect(screen.getByRole("heading", { name: "User Control" })).toBeInTheDocument();
+    expect(screen.getByText("trader@example.com")).toBeInTheDocument();
+    expect(screen.getByText("+1 555 010 2030")).toBeInTheDocument();
+    expect(screen.getByText("Plan Summary")).toBeInTheDocument();
+    expect(screen.getByText("Total Profit")).toBeInTheDocument();
+    expect(screen.getByText("+$9.50")).toBeInTheDocument();
+    expect(screen.getByText("365 Days")).toBeInTheDocument();
+    expect(screen.getByText("Upgrade Plan")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Cancel Plan" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Logout" })).toBeInTheDocument();
+
+    const bottomGrid = container.querySelector('[class*="lg:grid-cols-4"]');
+    expect(bottomGrid?.className).toContain("md:grid-cols-2");
+    expect(bottomGrid?.children).toHaveLength(4);
+
+    // Set Wallet opens the modal prefilled and saves through Supabase.
+    fireEvent.click(screen.getByRole("button", { name: "Set Wallet" }));
+    const walletDialog = screen.getByRole("dialog", { name: "Set Wallet" });
+    expect(walletDialog).toBeInTheDocument();
+    const walletField = screen.getByLabelText("Default Wallet Address");
+    expect(walletField).toHaveValue("0x35aec7E35F65ea227e49fDd321709D52Ada389E4");
+    fireEvent.change(walletField, { target: { value: "0xnewWalletAddress" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save Wallet" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Set Wallet" })).toBeNull());
 
     // Dark glassmorphism styling + responsive 3-column grid.
     const grid = container.querySelector(".mt-8.grid");
