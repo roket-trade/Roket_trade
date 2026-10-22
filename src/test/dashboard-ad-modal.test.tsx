@@ -49,6 +49,12 @@ vi.mock("@/components/AuthProvider", () => ({
 
 vi.mock("@/components/KycModal", () => ({ KycModal: () => null }));
 
+// ApexCharts is loaded lazily and is browser-only; a stub keeps the route test
+// focused on the dashboard layout and data.
+vi.mock("react-apexcharts", () => ({
+  default: ({ type }: { type?: string }) => <div data-testid="apex-chart" data-chart-type={type} />,
+}));
+
 // The real player resolves a remote VAST tag, which belongs in its own test
 // file. Here we only need a deterministic way to report "video finished".
 vi.mock("@/components/HilltopVideoAd", () => ({

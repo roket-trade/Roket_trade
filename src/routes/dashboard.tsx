@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import type { User } from "@supabase/supabase-js";
+import type { ApexOptions } from "apexcharts";
 import { TrendingDown, TrendingUp } from "lucide-react";
-import { Area, AreaChart, ResponsiveContainer, XAxis, YAxis } from "recharts";
 import { toast } from "sonner";
 import { AdsterraBanner } from "@/components/AdsterraBanner";
 import { HilltopVideoAd } from "@/components/HilltopVideoAd";
@@ -65,43 +65,135 @@ const EMPTY_SUMMARY: DashboardSummary = {
   activePlan: null,
 };
 
-type ProfitStats = {
-  today: number;
-  week: number;
-  month: number;
+type Candle = {
+  x: number;
+  y: [number, number, number, number];
 };
 
-type ChartPoint = {
-  t: number;
-  value: number;
+type PlatformWindow = {
+  profit: number;
+  loss: number;
 };
 
-const EMPTY_PROFIT_STATS: ProfitStats = { today: 0, week: 0, month: 0 };
+type PlatformStats = {
+  today: PlatformWindow;
+  week: PlatformWindow;
+  month: PlatformWindow;
+};
 
-// Profit transactions that feed the Today / Week / Month aggregates.
-const PROFIT_TYPES = ["daily_profit", "ad_earning", "referral_bonus"] as const;
-
-const PROFIT_ROWS: Array<[keyof ProfitStats, string]> = [
-  ["today", "Today Roket Profit"],
-  ["week", "This Week Roket Profit"],
-  ["month", "This Month Roket Profit"],
+const PLATFORM_PROFIT_ROWS: Array<[keyof PlatformStats, string]> = [
+  ["today", "Today Platform Profit"],
+  ["week", "This Week Platform Profit"],
+  ["month", "This Month Platform Profit"],
 ];
 
-const LOSS_ROWS: Array<[keyof ProfitStats, string]> = [
-  ["today", "Today Roket Loss"],
-  ["week", "This Week Roket Loss"],
-  ["month", "This Month Roket Loss"],
+const PLATFORM_LOSS_ROWS: Array<[keyof PlatformStats, string]> = [
+  ["today", "Today Platform Loss"],
+  ["week", "This Week Platform Loss"],
+  ["month", "This Month Platform Loss"],
 ];
 
-const CHART_POINTS = 32;
+const EMPTY_PLATFORM_STATS: PlatformStats = {
+  today: { profit: 0, loss: 0 },
+  week: { profit: 0, loss: 0 },
+  month: { profit: 0, loss: 0 },
+};
+
+const START_PRICE = 24_500;
+const CANDLE_COUNT = 56;
+const CANDLE_STEP_MS = 60_000;
 const CHART_TICK_MS = 3000;
+const TICKS_PER_CANDLE = CANDLE_STEP_MS / CHART_TICK_MS;
 
-// Deterministic seed so the server-rendered chart matches the first client
-// render; live jitter is only applied after mount.
-const INITIAL_CHART_DATA: ChartPoint[] = Array.from({ length: CHART_POINTS }, (_, index) => ({
-  t: index,
-  value: 100 + Math.sin(index / 2.6) * 7 + Math.cos(index / 5) * 3,
-}));
+function randomBetween(min: number, max: number): number {
+  return min + Math.random() * (max - min);
+}
+
+/**
+ * Platform-wide mock statistics. Losses are always 8–10x smaller than the
+ * matching profit window, mirroring the design brief.
+ */
+function createPlatformStats(): PlatformStats {
+  const todayProfit = randomBetween(10_000, 50_000);
+  const todayLoss = todayProfit / randomBetween(8, 10);
+
+  const weekProfit = todayProfit * 5 + randomBetween(15_000, 45_000);
+  const weekLoss = weekProfit / randomBetween(8, 10);
+
+  const monthProfit = weekProfit * 4 + randomBetween(50_000, 180_000);
+  const monthLoss = monthProfit / randomBetween(8, 10);
+
+  return {
+    today: { profit: round2(todayProfit), loss: round2(todayLoss) },
+    week: { profit: round2(weekProfit), loss: round2(weekLoss) },
+    month: { profit: round2(monthProfit), loss: round2(monthLoss) },
+  };
+}
+
+function makeCandle(open: number, time: number): Candle {
+  const close = Math.max(100, open + (Math.random() - 0.48) * 180);
+  const wick = Math.max(12, open * 0.0006) * (0.4 + Math.random());
+  const high = Math.max(open, close) + wick * Math.random();
+  const low = Math.max(1, Math.min(open, close) - wick * Math.random());
+  return {
+    x: time,
+    y: [round2(open), round2(high), round2(low), round2(close)],
+  };
+}
+
+function seedCandles(): Candle[] {
+  const now = Date.now();
+  const candles: Candle[] = [];
+  let price = START_PRICE;
+  for (let index = CANDLE_COUNT - 1; index >= 0; index -= 1) {
+    const candle = makeCandle(price, now - index * CANDLE_STEP_MS);
+    candles.push(candle);
+    price = candle.y[3];
+  }
+  return candles;
+}
+
+const CANDLE_CHART_OPTIONS: ApexOptions = {
+  chart: {
+    type: "candlestick",
+    background: "transparent",
+    toolbar: { show: false },
+    zoom: { enabled: false },
+    animations: { enabled: true, dynamicAnimation: { enabled: true, speed: 300 } },
+    foreColor: "#94a3b8",
+  },
+  theme: { mode: "dark" },
+  grid: {
+    borderColor: "#1f2937",
+    strokeDashArray: 4,
+    padding: { left: 0, right: 6 },
+  },
+  plotOptions: {
+    candlestick: {
+      colors: { upward: "#34d399", downward: "#f43f5e" },
+      wick: { useFillColor: true },
+    },
+  },
+  stroke: { width: 1 },
+  dataLabels: { enabled: false },
+  xaxis: {
+    type: "datetime",
+    axisBorder: { show: false },
+    axisTicks: { show: false },
+    labels: {
+      style: { colors: "#64748b", fontSize: "10px" },
+      datetimeUTC: false,
+    },
+    tooltip: { enabled: false },
+  },
+  yaxis: {
+    labels: {
+      style: { colors: "#64748b", fontSize: "10px" },
+      formatter: (value: number) => `$${Math.round(value).toLocaleString("en-US")}`,
+    },
+  },
+  tooltip: { theme: "dark", x: { format: "HH:mm:ss" } },
+};
 
 const AD_REWARD = 0.05;
 const AD_SECONDS = 15;
@@ -152,71 +244,99 @@ const money = (n: number) =>
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
+type ApexChartComponent = typeof import("react-apexcharts").default;
+
 /**
- * Client-side simulated market chart. The seed points are deterministic so
- * SSR and hydration agree; a random walk takes over after mount and shifts
- * one point every few seconds.
+ * Client-side simulated candlestick market. ApexCharts is loaded lazily so
+ * the SSR bundle never touches browser-only code. One live candle is updated
+ * every few seconds and a new one opens each minute.
  */
 function LiveMarketChart() {
-  const [data, setData] = useState<ChartPoint[]>(INITIAL_CHART_DATA);
+  const [Chart, setChart] = useState<ApexChartComponent | null>(null);
+  const [candles, setCandles] = useState<Candle[]>([]);
+  const ticksInCandle = useRef(0);
 
   useEffect(() => {
+    let cancelled = false;
+    void import("react-apexcharts").then((module) => {
+      // Functional update keeps React from invoking the component as an updater.
+      if (!cancelled) setChart(() => module.default);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    setCandles(seedCandles());
+
     const timer = setInterval(() => {
-      setData((current) => {
-        const last = current[current.length - 1];
-        const drift = (Math.random() - 0.46) * 5;
-        const next = Math.min(160, Math.max(55, (last?.value ?? 100) + drift));
-        return [...current.slice(1), { t: (last?.t ?? 0) + 1, value: round2(next) }];
+      setCandles((current) => {
+        if (!current.length) return current;
+
+        const next = current.slice();
+        const last = next[next.length - 1];
+        if (!last) return current;
+
+        const [open, high, low, close] = last.y;
+        const nextClose = round2(Math.max(100, close + (Math.random() - 0.48) * 60));
+
+        next[next.length - 1] = {
+          x: last.x,
+          y: [open, round2(Math.max(high, nextClose)), round2(Math.min(low, nextClose)), nextClose],
+        };
+
+        ticksInCandle.current += 1;
+        if (ticksInCandle.current >= TICKS_PER_CANDLE) {
+          ticksInCandle.current = 0;
+          next.push(makeCandle(nextClose, last.x + CANDLE_STEP_MS));
+          if (next.length > CANDLE_COUNT) next.shift();
+        }
+        return next;
       });
     }, CHART_TICK_MS);
+
     return () => clearInterval(timer);
   }, []);
 
   return (
-    <div className="mt-4 h-56 w-full sm:h-64" role="img" aria-label="Simulated live market chart">
-      <ResponsiveContainer width="100%" height="100%">
-        <AreaChart data={data} margin={{ top: 8, right: 0, left: 0, bottom: 0 }}>
-          <defs>
-            <linearGradient id="roket-market-fill" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#34d399" stopOpacity={0.45} />
-              <stop offset="60%" stopColor="#34d399" stopOpacity={0.12} />
-              <stop offset="100%" stopColor="#34d399" stopOpacity={0} />
-            </linearGradient>
-          </defs>
-          <XAxis dataKey="t" hide />
-          <YAxis hide domain={["dataMin - 8", "dataMax + 8"]} />
-          <Area
-            type="monotone"
-            dataKey="value"
-            stroke="#4ade80"
-            strokeWidth={2.5}
-            fill="url(#roket-market-fill)"
-            dot={false}
-            activeDot={false}
-            isAnimationActive={false}
-            style={{ filter: "drop-shadow(0 0 6px rgba(52, 211, 153, 0.5))" }}
-          />
-        </AreaChart>
-      </ResponsiveContainer>
+    <div
+      className="mt-4 h-56 w-full sm:h-64"
+      role="img"
+      aria-label="Live Roket market candlestick chart"
+    >
+      {Chart && candles.length > 0 ? (
+        <Chart
+          type="candlestick"
+          height="100%"
+          width="100%"
+          options={CANDLE_CHART_OPTIONS}
+          series={[{ data: candles }]}
+        />
+      ) : (
+        <div className="h-full w-full animate-pulse rounded-xl bg-gray-800/40" />
+      )}
     </div>
   );
 }
 
-function ProfitLossPanel({ profit, loss }: { profit: ProfitStats; loss: ProfitStats }) {
+function PlatformProfitLossPanel({ stats }: { stats: PlatformStats }) {
   return (
     <div className="mt-5 grid gap-4 border-t border-gray-800 pt-5 sm:grid-cols-2">
       <div className="rounded-xl border border-emerald-500/15 bg-emerald-500/[0.04] p-4">
         <div className="flex items-center justify-between gap-3">
           <p className="text-xs font-semibold uppercase tracking-widest text-emerald-400">
-            Roket Profit
+            Platform Profit
           </p>
           <TrendingUp className="h-4 w-4 text-emerald-400" aria-hidden="true" />
         </div>
         <dl className="mt-3 space-y-2.5 text-sm">
-          {PROFIT_ROWS.map(([key, label]) => (
+          {PLATFORM_PROFIT_ROWS.map(([key, label]) => (
             <div key={key} className="flex items-center justify-between gap-3">
               <dt className="text-muted-foreground">{label}</dt>
-              <dd className="font-display font-bold text-emerald-400">+{money(profit[key])}</dd>
+              <dd className="font-display font-bold text-emerald-400">
+                +{money(stats[key].profit)}
+              </dd>
             </div>
           ))}
         </dl>
@@ -225,15 +345,15 @@ function ProfitLossPanel({ profit, loss }: { profit: ProfitStats; loss: ProfitSt
       <div className="rounded-xl border border-rose-500/15 bg-rose-500/[0.04] p-4">
         <div className="flex items-center justify-between gap-3">
           <p className="text-xs font-semibold uppercase tracking-widest text-rose-400">
-            Roket Loss
+            Platform Loss
           </p>
           <TrendingDown className="h-4 w-4 text-rose-400" aria-hidden="true" />
         </div>
         <dl className="mt-3 space-y-2.5 text-sm">
-          {LOSS_ROWS.map(([key, label]) => (
+          {PLATFORM_LOSS_ROWS.map(([key, label]) => (
             <div key={key} className="flex items-center justify-between gap-3">
               <dt className="text-muted-foreground">{label}</dt>
-              <dd className="font-display font-bold text-rose-400">-{money(loss[key])}</dd>
+              <dd className="font-display font-bold text-rose-400">-{money(stats[key].loss)}</dd>
             </div>
           ))}
         </dl>
@@ -265,7 +385,7 @@ function DashboardContent() {
   const [adEarnings, setAdEarnings] = useState<AdEarning[]>([]);
   const [referrals, setReferrals] = useState<ReferralMember[]>([]);
   const [summary, setSummary] = useState<DashboardSummary>(EMPTY_SUMMARY);
-  const [profitStats, setProfitStats] = useState<ProfitStats>(EMPTY_PROFIT_STATS);
+  const [platformStats, setPlatformStats] = useState<PlatformStats>(EMPTY_PLATFORM_STATS);
   const [withdrawOpen, setWithdrawOpen] = useState(false);
   const [withdrawSource, setWithdrawSource] = useState<"main" | "extra">("main");
   const [withdrawAddress, setWithdrawAddress] = useState("");
@@ -357,7 +477,7 @@ function DashboardContent() {
 
       // Aggregates for the top cards. Supabase has no client-side SUM, so the
       // amounts are summed here; failures fall back to empty lists.
-      const [adRows, bonusRows, withdrawalRows, depositRows, profitTxnRows] = await Promise.all([
+      const [adRows, bonusRows, withdrawalRows, depositRows] = await Promise.all([
         supabase
           .from("transactions")
           .select("amount")
@@ -383,11 +503,6 @@ function DashboardContent() {
           .eq("status", "completed")
           .order("created_at", { ascending: false })
           .limit(1),
-        supabase
-          .from("transactions")
-          .select("type,amount,created_at")
-          .eq("user_id", currentUser.id)
-          .in("type", [...PROFIT_TYPES]),
       ]);
       if (id !== requestId.current) return;
 
@@ -427,39 +542,6 @@ function DashboardContent() {
             }
           : null,
       });
-
-      // Profit aggregates use calendar periods in the viewer's timezone:
-      // today from midnight, this week from Monday, this month from the 1st.
-      const now = new Date();
-      const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-      const mondayOffset = (now.getDay() + 6) % 7;
-      const weekStart = new Date(
-        now.getFullYear(),
-        now.getMonth(),
-        now.getDate() - mondayOffset,
-      ).getTime();
-      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
-
-      const profitRows = (profitTxnRows.data ?? []) as Array<{
-        type: string;
-        amount: number | string | null;
-        created_at: string;
-      }>;
-      const profitSince = (start: number) => {
-        const total = profitRows.reduce((sum, row) => {
-          if (!(PROFIT_TYPES as readonly string[]).includes(row.type)) return sum;
-          const createdAt = new Date(row.created_at).getTime();
-          if (!Number.isFinite(createdAt) || createdAt < start) return sum;
-          return sum + Math.abs(Number(row.amount) || 0);
-        }, 0);
-        return round2(total);
-      };
-
-      setProfitStats({
-        today: profitSince(todayStart),
-        week: profitSince(weekStart),
-        month: profitSince(monthStart),
-      });
     } catch (err) {
       if (id !== requestId.current) return;
       console.error("[dashboard] fetchProfile threw", err);
@@ -475,6 +557,12 @@ function DashboardContent() {
   useEffect(() => {
     void fetchProfile();
   }, [fetchProfile]);
+
+  // Platform-wide mock statistics. These are intentionally independent of the
+  // signed-in user's transaction history and regenerate on each dashboard load.
+  useEffect(() => {
+    setPlatformStats(createPlatformStats());
+  }, []);
 
   const signOut = async () => {
     const { error } = await supabase.auth.signOut();
@@ -589,11 +677,6 @@ function DashboardContent() {
         ...current,
         adReward: Math.round((current.adReward + AD_REWARD) * 100) / 100,
       }));
-      setProfitStats((current) => ({
-        today: round2(current.today + AD_REWARD),
-        week: round2(current.week + AD_REWARD),
-        month: round2(current.month + AD_REWARD),
-      }));
       await refreshAdEarnings(user.id);
       setAdOpen(false);
       toast.success("+$0.05 Added to Extra Balance");
@@ -635,15 +718,6 @@ function DashboardContent() {
   const planProgressPct = (planDaysPassed / PLAN_TOTAL_DAYS) * 100;
   const walletAddress =
     profile?.default_wallet_address || summary.latestWithdraw?.wallet_address || null;
-
-  // Loss is illustrative in this model: a fixed display floor plus a small
-  // share of the matching profit window. Nothing is deducted from balances.
-  const lossFromProfit = (profit: number, floor: number) => Math.max(floor, round2(profit * 0.18));
-  const lossStats: ProfitStats = {
-    today: lossFromProfit(profitStats.today, 0.42),
-    week: lossFromProfit(profitStats.week, 2.15),
-    month: lossFromProfit(profitStats.month, 7.8),
-  };
 
   // Strict dual-ad gate: the reward unlocks only when the 15 second timer has
   // elapsed AND the Hilltop video ad reported that it played to the end.
@@ -979,7 +1053,7 @@ function DashboardContent() {
                     Live Chart
                   </p>
                   <p className="mt-1 text-sm text-muted-foreground">
-                    Simulated market movement · updates every 3s
+                    Live candlesticks · updates every 3s
                   </p>
                 </div>
                 <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-emerald-400">
@@ -992,10 +1066,9 @@ function DashboardContent() {
               </div>
 
               <LiveMarketChart />
-              <ProfitLossPanel profit={profitStats} loss={lossStats} />
+              <PlatformProfitLossPanel stats={platformStats} />
               <p className="mt-3 text-[11px] text-muted-foreground">
-                Loss figures are illustrative for this dashboard design and are not deducted from
-                your balance.
+                These are Roket platform statistics.
               </p>
             </section>
 

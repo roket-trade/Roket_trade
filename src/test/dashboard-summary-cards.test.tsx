@@ -53,6 +53,10 @@ vi.mock("@/components/AuthProvider", () => ({
 vi.mock("@/components/KycModal", () => ({ KycModal: () => null }));
 vi.mock("@/components/HilltopVideoAd", () => ({ HilltopVideoAd: () => null }));
 
+vi.mock("react-apexcharts", () => ({
+  default: ({ type }: { type?: string }) => <div data-testid="apex-chart" data-chart-type={type} />,
+}));
+
 // Returns fixture rows per transaction type so the dashboard's aggregate
 // queries (ads, referral bonuses, withdrawals, active plan) can be asserted.
 vi.mock("@/integrations/supabase/client", () => {
@@ -138,10 +142,14 @@ const DashboardPage = () => {
   return <Component />;
 };
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
 
 describe("Dashboard top summary cards", () => {
   it("renders totals, plan progress and withdrawal aggregates in a 3-column glass grid", async () => {
+    vi.spyOn(Math, "random").mockReturnValue(0.5);
     const { container } = render(<DashboardPage />);
 
     expect(await screen.findByText("Total Balance")).toBeInTheDocument();
@@ -165,19 +173,33 @@ describe("Dashboard top summary cards", () => {
     expect(screen.getAllByText("$50.00").length).toBeGreaterThanOrEqual(2);
     expect(screen.getByText("0x35...89E4")).toBeInTheDocument();
 
-    // Live chart card + profit/loss stats.
+    // Live candlestick chart + platform-wide profit/loss stats.
     expect(screen.getByText("Live Chart")).toBeInTheDocument();
     expect(screen.getByText("Random Market")).toBeInTheDocument();
-    expect(screen.getByRole("img", { name: "Simulated live market chart" })).toBeInTheDocument();
-    expect(screen.getByText("Today Roket Profit")).toBeInTheDocument();
-    expect(screen.getByText("This Week Roket Profit")).toBeInTheDocument();
-    expect(screen.getByText("This Month Roket Profit")).toBeInTheDocument();
-    // Fixtures: 3 + 1 + 2.5 = 6.5 for all three windows (all rows are "now").
-    expect(screen.getAllByText("+$6.50")).toHaveLength(3);
-    expect(screen.getByText("Today Roket Loss")).toBeInTheDocument();
-    expect(screen.getByText("-$1.17")).toBeInTheDocument();
-    expect(screen.getByText("-$2.15")).toBeInTheDocument();
-    expect(screen.getByText("-$7.80")).toBeInTheDocument();
+    expect(
+      screen.getByRole("img", { name: "Live Roket market candlestick chart" }),
+    ).toBeInTheDocument();
+    const chart = await screen.findByTestId("apex-chart");
+    expect(chart).toHaveAttribute("data-chart-type", "candlestick");
+
+    expect(screen.getByText("Platform Profit")).toBeInTheDocument();
+    expect(screen.getByText("Platform Loss")).toBeInTheDocument();
+    expect(screen.getByText("Today Platform Profit")).toBeInTheDocument();
+    expect(screen.getByText("This Week Platform Profit")).toBeInTheDocument();
+    expect(screen.getByText("This Month Platform Profit")).toBeInTheDocument();
+    expect(screen.getByText("Today Platform Loss")).toBeInTheDocument();
+    expect(screen.getByText("This Week Platform Loss")).toBeInTheDocument();
+    expect(screen.getByText("This Month Platform Loss")).toBeInTheDocument();
+
+    // Math.random is pinned to 0.5: today = 30k (loss 30k/9), week = 180k,
+    // month = 835k.
+    expect(await screen.findByText("+$30,000.00")).toBeInTheDocument();
+    expect(screen.getByText("+$180,000.00")).toBeInTheDocument();
+    expect(screen.getByText("+$835,000.00")).toBeInTheDocument();
+    expect(screen.getByText("-$3,333.33")).toBeInTheDocument();
+    expect(screen.getByText("-$20,000.00")).toBeInTheDocument();
+    expect(screen.getByText("-$92,777.78")).toBeInTheDocument();
+    expect(screen.getByText("These are Roket platform statistics.")).toBeInTheDocument();
 
     // Dark glassmorphism styling + responsive 3-column grid.
     const grid = container.querySelector(".mt-8.grid");
