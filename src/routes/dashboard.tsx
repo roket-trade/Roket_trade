@@ -35,8 +35,75 @@ type ReferralMember = {
   created_at: string;
 };
 
+type ActivePlan = {
+  plan_name: string | null;
+  amount: number;
+  started_at: string;
+};
+
+type LatestWithdraw = {
+  amount: number;
+  created_at: string;
+  wallet_address: string | null;
+};
+
+type DashboardSummary = {
+  adReward: number;
+  referralBonus: number;
+  totalWithdrawn: number;
+  latestWithdraw: LatestWithdraw | null;
+  activePlan: ActivePlan | null;
+};
+
+const EMPTY_SUMMARY: DashboardSummary = {
+  adReward: 0,
+  referralBonus: 0,
+  totalWithdrawn: 0,
+  latestWithdraw: null,
+  activePlan: null,
+};
+
 const AD_REWARD = 0.05;
 const AD_SECONDS = 15;
+
+const PLAN_TOTAL_DAYS = 365;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+// Mirrors the rates used by public.distribute_daily_profits().
+const PLAN_DAILY_RATES: Record<string, number> = {
+  "plan 1": 1,
+  "plan 2": 3,
+  "plan 3": 4.5,
+  "plan 4": 8,
+};
+
+function planDailyRate(planName: string | null, investment: number): number {
+  const key = (planName ?? "").trim().toLowerCase();
+  if (PLAN_DAILY_RATES[key] != null) return PLAN_DAILY_RATES[key];
+  if (/plan\s*4/.test(key) || investment >= 250) return 8;
+  if (/plan\s*3/.test(key) || investment >= 180) return 4.5;
+  if (/plan\s*2/.test(key) || investment >= 120) return 3;
+  if (/plan\s*1/.test(key) || investment >= 60) return 1;
+  return 0;
+}
+
+function truncateWallet(address: string | null): string {
+  if (!address) return "—";
+  const trimmed = address.trim();
+  if (trimmed.length <= 10) return trimmed;
+  return `${trimmed.slice(0, 4)}...${trimmed.slice(-4)}`;
+}
+
+function formatDay(iso: string | null): string {
+  if (!iso) return "—";
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "—";
+  return date.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}
 
 const WITHDRAW_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -65,6 +132,7 @@ function DashboardContent() {
   const [adClaiming, setAdClaiming] = useState(false);
   const [adEarnings, setAdEarnings] = useState<AdEarning[]>([]);
   const [referrals, setReferrals] = useState<ReferralMember[]>([]);
+  const [summary, setSummary] = useState<DashboardSummary>(EMPTY_SUMMARY);
   const [withdrawOpen, setWithdrawOpen] = useState(false);
   const [withdrawSource, setWithdrawSource] = useState<"main" | "extra">("main");
   const [withdrawAddress, setWithdrawAddress] = useState("");
@@ -153,6 +221,74 @@ function DashboardContent() {
         .order("created_at", { ascending: false });
       if (id !== requestId.current) return;
       if (team) setReferrals(team as ReferralMember[]);
+
+      // Aggregates for the top cards. Supabase has no client-side SUM, so the
+      // amounts are summed here; failures fall back to empty lists.
+      const [adRows, bonusRows, withdrawalRows, depositRows] = await Promise.all([
+        supabase
+          .from("transactions")
+          .select("amount")
+          .eq("user_id", currentUser.id)
+          .eq("type", "ad_earning"),
+        supabase
+          .from("transactions")
+          .select("amount")
+          .eq("user_id", currentUser.id)
+          .eq("type", "referral_bonus"),
+        supabase
+          .from("transactions")
+          .select("amount,created_at,wallet_address")
+          .eq("user_id", currentUser.id)
+          .eq("type", "withdrawal")
+          .eq("status", "completed")
+          .order("created_at", { ascending: false }),
+        supabase
+          .from("transactions")
+          .select("plan_name,deposit_amount,amount,created_at")
+          .eq("user_id", currentUser.id)
+          .eq("type", "deposit")
+          .eq("status", "completed")
+          .order("created_at", { ascending: false })
+          .limit(1),
+      ]);
+      if (id !== requestId.current) return;
+
+      const sumAmounts = (rows: Array<{ amount: number | string | null }> | null) =>
+        (rows ?? []).reduce((total, row) => total + Math.abs(Number(row.amount) || 0), 0);
+
+      const withdrawals = (withdrawalRows.data ?? []) as Array<{
+        amount: number | string;
+        created_at: string;
+        wallet_address: string | null;
+      }>;
+      const latestDeposit = (depositRows.data ?? [])[0] as
+        | {
+            plan_name: string | null;
+            deposit_amount: number | string | null;
+            amount: number | string;
+            created_at: string;
+          }
+        | undefined;
+
+      setSummary({
+        adReward: sumAmounts(adRows.data),
+        referralBonus: sumAmounts(bonusRows.data),
+        totalWithdrawn: sumAmounts(withdrawals),
+        latestWithdraw: withdrawals[0]
+          ? {
+              amount: Math.abs(Number(withdrawals[0].amount) || 0),
+              created_at: withdrawals[0].created_at,
+              wallet_address: withdrawals[0].wallet_address ?? null,
+            }
+          : null,
+        activePlan: latestDeposit
+          ? {
+              plan_name: latestDeposit.plan_name,
+              amount: Number(latestDeposit.deposit_amount ?? latestDeposit.amount ?? 0),
+              started_at: latestDeposit.created_at,
+            }
+          : null,
+      });
     } catch (err) {
       if (id !== requestId.current) return;
       console.error("[dashboard] fetchProfile threw", err);
@@ -278,6 +414,10 @@ function DashboardContent() {
       setProfile((current) =>
         current ? { ...current, extra_balance: nextExtra } : current,
       );
+      setSummary((current) => ({
+        ...current,
+        adReward: Math.round((current.adReward + AD_REWARD) * 100) / 100,
+      }));
       await refreshAdEarnings(user.id);
       setAdOpen(false);
       toast.success("+$0.05 Added to Extra Balance");
@@ -300,6 +440,26 @@ function DashboardContent() {
   };
 
   const totalBalance = mainBalance + extraBalance;
+
+  // Top-card derived values.
+  const planStartedAt = profile?.plan_started_at ?? summary.activePlan?.started_at ?? null;
+  const activePlanName = summary.activePlan?.plan_name ?? null;
+  const investmentAmount = summary.activePlan?.amount ?? 0;
+  const planStartedMs = planStartedAt ? new Date(planStartedAt).getTime() : Number.NaN;
+  const planExpiresMs = profile?.plan_expires_at
+    ? new Date(profile.plan_expires_at).getTime()
+    : Number.NaN;
+  const planActive =
+    Number.isFinite(planStartedMs) &&
+    (!Number.isFinite(planExpiresMs) || planExpiresMs > Date.now());
+  const dailyEarning = planActive ? planDailyRate(activePlanName, investmentAmount) : 0;
+  const planDaysPassed = Number.isFinite(planStartedMs)
+    ? Math.min(PLAN_TOTAL_DAYS, Math.max(1, Math.floor((Date.now() - planStartedMs) / DAY_MS) + 1))
+    : 0;
+  const planProgressPct = (planDaysPassed / PLAN_TOTAL_DAYS) * 100;
+  const walletAddress =
+    profile?.default_wallet_address || summary.latestWithdraw?.wallet_address || null;
+
   // Strict dual-ad gate: the reward unlocks only when the 15 second timer has
   // elapsed AND the Hilltop video ad reported that it played to the end.
   const adTimerDone = adSecondsLeft <= 0;
@@ -325,6 +485,7 @@ function DashboardContent() {
 
   const openWithdraw = () => {
     setWithdrawAmount("");
+    setWithdrawAddress(profile?.default_wallet_address ?? "");
     setWithdrawOpen(true);
   };
 
@@ -378,18 +539,29 @@ function DashboardContent() {
           : { extra_balance: Math.round((extraBalance - amount) * 100) / 100 };
       const { error: profileError } = await supabase
         .from("profiles")
-        .update({ ...balancePatch, last_withdraw_at: nowIso })
+        .update({
+          ...balancePatch,
+          last_withdraw_at: nowIso,
+          default_wallet_address: address,
+        })
         .eq("id", user.id);
       if (profileError) {
         const msg = /column .*last_withdraw_at/i.test(profileError.message)
           ? "Please run the withdrawal migration first (last_withdraw_at column missing)."
-          : profileError.message;
+          : /column .*default_wallet_address/i.test(profileError.message)
+            ? "Please run the dashboard profile migration first (default_wallet_address missing)."
+            : profileError.message;
         throw new Error(msg);
       }
 
       setProfile((current) =>
         current
-          ? { ...current, ...balancePatch, last_withdraw_at: nowIso }
+          ? {
+              ...current,
+              ...balancePatch,
+              last_withdraw_at: nowIso,
+              default_wallet_address: address,
+            }
           : current,
       );
       setWithdrawOpen(false);
@@ -476,44 +648,142 @@ function DashboardContent() {
               </p>
               <h1 className="mt-2 font-display text-4xl font-bold">Welcome back, {fullName}</h1>
               <p className="mt-3 max-w-2xl text-muted-foreground">
-                Your account is ready. Choose a plan, submit your deposit, and our team will
-                verify it manually.
+                Your account is ready. Choose a plan, submit your deposit, and our team will verify
+                it manually.
+              </p>
+              <p className="mt-2 text-xs text-muted-foreground">
+                {email ? `${email} · ` : ""}
+                Member since {formatDay(memberSince ?? null)} · KYC{" "}
+                {kycVerified ? "verified" : kycStatus || "required"}
               </p>
             </section>
 
             <div className="mt-8 grid gap-4 md:grid-cols-3">
-              <section className="rounded-2xl border bg-card p-5">
-                <p className="text-xs uppercase tracking-widest text-muted-foreground">Account</p>
-                <p className="mt-3 truncate font-display text-lg font-bold">{fullName}</p>
-                <p className="mt-1 truncate text-sm text-muted-foreground">{email}</p>
-                <p className="mt-4 text-xs text-muted-foreground">
-                  {memberSince
-                    ? `Member since ${new Date(memberSince).toLocaleDateString("en-US", {
-                        month: "short",
-                        day: "numeric",
-                        year: "numeric",
-                      })}`
-                    : "Member"}
+              <section className="rounded-2xl border border-gray-800 bg-gray-900/50 p-5 backdrop-blur">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-xs uppercase tracking-widest text-muted-foreground">
+                    Total Balance
+                  </p>
+                  <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-emerald-400">
+                    Live
+                  </span>
+                </div>
+                <p className="mt-3 font-display text-3xl font-bold text-white">
+                  {money(Number.isFinite(totalBalance) ? totalBalance : 0)}
                 </p>
-                <p className="mt-2 text-xs font-semibold uppercase tracking-wider text-primary">
-                  KYC {kycVerified ? "verified" : kycStatus || "required"}
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Main {money(mainBalance)} · Extra {money(extraBalance)}
                 </p>
+                <dl className="mt-4 space-y-2 border-t border-gray-800 pt-4 text-sm">
+                  <div className="flex items-center justify-between gap-3">
+                    <dt className="text-muted-foreground">Daily Earning</dt>
+                    <dd
+                      className={
+                        dailyEarning > 0
+                          ? "font-semibold text-emerald-400"
+                          : "font-semibold text-muted-foreground"
+                      }
+                    >
+                      {dailyEarning > 0 ? `+${money(dailyEarning)} / day` : "—"}
+                    </dd>
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <dt className="text-muted-foreground">Ads Reward</dt>
+                    <dd
+                      className={
+                        summary.adReward > 0
+                          ? "font-semibold text-emerald-400"
+                          : "font-semibold text-muted-foreground"
+                      }
+                    >
+                      {summary.adReward > 0 ? `+${money(summary.adReward)}` : money(0)}
+                    </dd>
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <dt className="text-muted-foreground">Referral Bonus</dt>
+                    <dd
+                      className={
+                        summary.referralBonus > 0
+                          ? "font-semibold text-emerald-400"
+                          : "font-semibold text-muted-foreground"
+                      }
+                    >
+                      {summary.referralBonus > 0 ? `+${money(summary.referralBonus)}` : money(0)}
+                    </dd>
+                  </div>
+                </dl>
               </section>
 
-              <section className="rounded-2xl border border-emerald-500/40 bg-card p-5">
-                <p className="text-xs uppercase tracking-widest text-muted-foreground">Main Balance</p>
-                <p className="mt-3 font-display text-3xl font-bold text-emerald-500">
-                  {money(Number.isFinite(mainBalance) ? mainBalance : 0)}
+              <section className="rounded-2xl border border-gray-800 bg-gray-900/50 p-5 backdrop-blur">
+                <p className="text-xs uppercase tracking-widest text-muted-foreground">Your Plan</p>
+                <p className="mt-3 font-display text-2xl font-bold text-white">
+                  {activePlanName ?? "No active plan"}
                 </p>
-                <p className="mt-2 text-sm text-muted-foreground">Plan deposits land here.</p>
+                <dl className="mt-4 space-y-2 text-sm">
+                  <div className="flex items-center justify-between gap-3">
+                    <dt className="text-muted-foreground">Plan Started</dt>
+                    <dd className="font-medium text-foreground">{formatDay(planStartedAt)}</dd>
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <dt className="text-muted-foreground">Investment</dt>
+                    <dd className="font-medium text-foreground">{money(investmentAmount)}</dd>
+                  </div>
+                </dl>
+                <div className="mt-4 border-t border-gray-800 pt-4">
+                  <div className="flex items-center justify-between gap-3 text-xs">
+                    <span className="text-muted-foreground">Plan progress</span>
+                    <span className="font-semibold text-foreground">
+                      Day {planDaysPassed} / {PLAN_TOTAL_DAYS}
+                    </span>
+                  </div>
+                  <div
+                    role="progressbar"
+                    aria-label="Plan progress"
+                    aria-valuemin={0}
+                    aria-valuemax={PLAN_TOTAL_DAYS}
+                    aria-valuenow={planDaysPassed}
+                    className="mt-2 h-2 overflow-hidden rounded-full bg-gray-800"
+                  >
+                    <div
+                      className="h-full rounded-full bg-gradient-to-r from-blue-500 to-emerald-400 transition-all duration-700"
+                      style={{ width: `${planProgressPct}%` }}
+                    />
+                  </div>
+                </div>
               </section>
 
-              <section className="rounded-2xl border border-amber-500/40 bg-card p-5">
-                <p className="text-xs uppercase tracking-widest text-muted-foreground">Extra Balance</p>
-                <p className="mt-3 font-display text-3xl font-bold text-amber-500">
-                  {money(Number.isFinite(extraBalance) ? extraBalance : 0)}
+              <section className="rounded-2xl border border-gray-800 bg-gray-900/50 p-5 backdrop-blur">
+                <p className="text-xs uppercase tracking-widest text-muted-foreground">
+                  Withdrawals
                 </p>
-                <p className="mt-2 text-sm text-muted-foreground">Ad rewards land here.</p>
+                <p className="mt-3 font-display text-3xl font-bold text-white">
+                  {money(summary.totalWithdrawn)}
+                </p>
+                <p className="mt-1 text-xs text-muted-foreground">Total withdrawn</p>
+                <dl className="mt-4 space-y-2 border-t border-gray-800 pt-4 text-sm">
+                  <div className="flex items-center justify-between gap-3">
+                    <dt className="text-muted-foreground">Latest Withdraw</dt>
+                    <dd className="text-right">
+                      <span className="block font-semibold text-foreground">
+                        {summary.latestWithdraw ? money(summary.latestWithdraw.amount) : "—"}
+                      </span>
+                      {summary.latestWithdraw && (
+                        <span className="block text-[11px] text-muted-foreground">
+                          {formatDay(summary.latestWithdraw.created_at)}
+                        </span>
+                      )}
+                    </dd>
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <dt className="text-muted-foreground">Wallet</dt>
+                    <dd
+                      className="font-mono text-xs font-semibold text-foreground"
+                      title={walletAddress ?? undefined}
+                    >
+                      {truncateWallet(walletAddress)}
+                    </dd>
+                  </div>
+                </dl>
               </section>
             </div>
 

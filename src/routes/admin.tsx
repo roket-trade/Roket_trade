@@ -146,7 +146,26 @@ function AdminContent() {
       if (uErr) throw uErr;
       if (!up) throw new Error("User profile not found.");
       const nextBal = Math.round((Number(up.main_balance ?? 0) + credit) * 100) / 100;
-      const { error: bErr } = await supabase.from("profiles").update({ main_balance: nextBal }).eq("id", tx.user_id);
+      // Start (or restart) the 365-day plan window as soon as a deposit is
+      // approved, so the dashboard can render "Day X / 365".
+      const planStartedAt = new Date();
+      const planExpiresAt = new Date(planStartedAt.getTime() + 365 * 24 * 60 * 60 * 1000);
+      let { error: bErr } = await supabase
+        .from("profiles")
+        .update({
+          main_balance: nextBal,
+          plan_started_at: planStartedAt.toISOString(),
+          plan_expires_at: planExpiresAt.toISOString(),
+        })
+        .eq("id", tx.user_id);
+      // Tolerate databases that have not run the dashboard profile migration
+      // yet: the balance credit must still succeed.
+      if (bErr && /column .*plan_(started|expires)_at/i.test(bErr.message)) {
+        ({ error: bErr } = await supabase
+          .from("profiles")
+          .update({ main_balance: nextBal })
+          .eq("id", tx.user_id));
+      }
       if (bErr) throw bErr;
       const refId = (up as { referred_by?: string | null }).referred_by;
       if (refId) {
