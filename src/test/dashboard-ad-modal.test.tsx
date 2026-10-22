@@ -66,6 +66,7 @@ vi.mock("@/integrations/supabase/client", () => {
     Object.assign(query, {
       select: chain,
       eq: chain,
+      in: chain,
       order: chain,
       limit: chain,
       insert: chain,

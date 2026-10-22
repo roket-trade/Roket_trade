@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import type { User } from "@supabase/supabase-js";
+import { TrendingDown, TrendingUp } from "lucide-react";
+import { Area, AreaChart, ResponsiveContainer, XAxis, YAxis } from "recharts";
 import { toast } from "sonner";
 import { AdsterraBanner } from "@/components/AdsterraBanner";
 import { HilltopVideoAd } from "@/components/HilltopVideoAd";
@@ -63,6 +65,44 @@ const EMPTY_SUMMARY: DashboardSummary = {
   activePlan: null,
 };
 
+type ProfitStats = {
+  today: number;
+  week: number;
+  month: number;
+};
+
+type ChartPoint = {
+  t: number;
+  value: number;
+};
+
+const EMPTY_PROFIT_STATS: ProfitStats = { today: 0, week: 0, month: 0 };
+
+// Profit transactions that feed the Today / Week / Month aggregates.
+const PROFIT_TYPES = ["daily_profit", "ad_earning", "referral_bonus"] as const;
+
+const PROFIT_ROWS: Array<[keyof ProfitStats, string]> = [
+  ["today", "Today Roket Profit"],
+  ["week", "This Week Roket Profit"],
+  ["month", "This Month Roket Profit"],
+];
+
+const LOSS_ROWS: Array<[keyof ProfitStats, string]> = [
+  ["today", "Today Roket Loss"],
+  ["week", "This Week Roket Loss"],
+  ["month", "This Month Roket Loss"],
+];
+
+const CHART_POINTS = 32;
+const CHART_TICK_MS = 3000;
+
+// Deterministic seed so the server-rendered chart matches the first client
+// render; live jitter is only applied after mount.
+const INITIAL_CHART_DATA: ChartPoint[] = Array.from({ length: CHART_POINTS }, (_, index) => ({
+  t: index,
+  value: 100 + Math.sin(index / 2.6) * 7 + Math.cos(index / 5) * 3,
+}));
+
 const AD_REWARD = 0.05;
 const AD_SECONDS = 15;
 
@@ -110,6 +150,98 @@ const WITHDRAW_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000;
 const money = (n: number) =>
   n.toLocaleString("en-US", { style: "currency", currency: "USD" });
 
+const round2 = (n: number) => Math.round(n * 100) / 100;
+
+/**
+ * Client-side simulated market chart. The seed points are deterministic so
+ * SSR and hydration agree; a random walk takes over after mount and shifts
+ * one point every few seconds.
+ */
+function LiveMarketChart() {
+  const [data, setData] = useState<ChartPoint[]>(INITIAL_CHART_DATA);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setData((current) => {
+        const last = current[current.length - 1];
+        const drift = (Math.random() - 0.46) * 5;
+        const next = Math.min(160, Math.max(55, (last?.value ?? 100) + drift));
+        return [...current.slice(1), { t: (last?.t ?? 0) + 1, value: round2(next) }];
+      });
+    }, CHART_TICK_MS);
+    return () => clearInterval(timer);
+  }, []);
+
+  return (
+    <div className="mt-4 h-56 w-full sm:h-64" role="img" aria-label="Simulated live market chart">
+      <ResponsiveContainer width="100%" height="100%">
+        <AreaChart data={data} margin={{ top: 8, right: 0, left: 0, bottom: 0 }}>
+          <defs>
+            <linearGradient id="roket-market-fill" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#34d399" stopOpacity={0.45} />
+              <stop offset="60%" stopColor="#34d399" stopOpacity={0.12} />
+              <stop offset="100%" stopColor="#34d399" stopOpacity={0} />
+            </linearGradient>
+          </defs>
+          <XAxis dataKey="t" hide />
+          <YAxis hide domain={["dataMin - 8", "dataMax + 8"]} />
+          <Area
+            type="monotone"
+            dataKey="value"
+            stroke="#4ade80"
+            strokeWidth={2.5}
+            fill="url(#roket-market-fill)"
+            dot={false}
+            activeDot={false}
+            isAnimationActive={false}
+            style={{ filter: "drop-shadow(0 0 6px rgba(52, 211, 153, 0.5))" }}
+          />
+        </AreaChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+function ProfitLossPanel({ profit, loss }: { profit: ProfitStats; loss: ProfitStats }) {
+  return (
+    <div className="mt-5 grid gap-4 border-t border-gray-800 pt-5 sm:grid-cols-2">
+      <div className="rounded-xl border border-emerald-500/15 bg-emerald-500/[0.04] p-4">
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-xs font-semibold uppercase tracking-widest text-emerald-400">
+            Roket Profit
+          </p>
+          <TrendingUp className="h-4 w-4 text-emerald-400" aria-hidden="true" />
+        </div>
+        <dl className="mt-3 space-y-2.5 text-sm">
+          {PROFIT_ROWS.map(([key, label]) => (
+            <div key={key} className="flex items-center justify-between gap-3">
+              <dt className="text-muted-foreground">{label}</dt>
+              <dd className="font-display font-bold text-emerald-400">+{money(profit[key])}</dd>
+            </div>
+          ))}
+        </dl>
+      </div>
+
+      <div className="rounded-xl border border-rose-500/15 bg-rose-500/[0.04] p-4">
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-xs font-semibold uppercase tracking-widest text-rose-400">
+            Roket Loss
+          </p>
+          <TrendingDown className="h-4 w-4 text-rose-400" aria-hidden="true" />
+        </div>
+        <dl className="mt-3 space-y-2.5 text-sm">
+          {LOSS_ROWS.map(([key, label]) => (
+            <div key={key} className="flex items-center justify-between gap-3">
+              <dt className="text-muted-foreground">{label}</dt>
+              <dd className="font-display font-bold text-rose-400">-{money(loss[key])}</dd>
+            </div>
+          ))}
+        </dl>
+      </div>
+    </div>
+  );
+}
+
 function Dashboard() {
   return (
     <RequireAuth>
@@ -133,6 +265,7 @@ function DashboardContent() {
   const [adEarnings, setAdEarnings] = useState<AdEarning[]>([]);
   const [referrals, setReferrals] = useState<ReferralMember[]>([]);
   const [summary, setSummary] = useState<DashboardSummary>(EMPTY_SUMMARY);
+  const [profitStats, setProfitStats] = useState<ProfitStats>(EMPTY_PROFIT_STATS);
   const [withdrawOpen, setWithdrawOpen] = useState(false);
   const [withdrawSource, setWithdrawSource] = useState<"main" | "extra">("main");
   const [withdrawAddress, setWithdrawAddress] = useState("");
@@ -224,7 +357,7 @@ function DashboardContent() {
 
       // Aggregates for the top cards. Supabase has no client-side SUM, so the
       // amounts are summed here; failures fall back to empty lists.
-      const [adRows, bonusRows, withdrawalRows, depositRows] = await Promise.all([
+      const [adRows, bonusRows, withdrawalRows, depositRows, profitTxnRows] = await Promise.all([
         supabase
           .from("transactions")
           .select("amount")
@@ -250,6 +383,11 @@ function DashboardContent() {
           .eq("status", "completed")
           .order("created_at", { ascending: false })
           .limit(1),
+        supabase
+          .from("transactions")
+          .select("type,amount,created_at")
+          .eq("user_id", currentUser.id)
+          .in("type", [...PROFIT_TYPES]),
       ]);
       if (id !== requestId.current) return;
 
@@ -288,6 +426,39 @@ function DashboardContent() {
               started_at: latestDeposit.created_at,
             }
           : null,
+      });
+
+      // Profit aggregates use calendar periods in the viewer's timezone:
+      // today from midnight, this week from Monday, this month from the 1st.
+      const now = new Date();
+      const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+      const mondayOffset = (now.getDay() + 6) % 7;
+      const weekStart = new Date(
+        now.getFullYear(),
+        now.getMonth(),
+        now.getDate() - mondayOffset,
+      ).getTime();
+      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+
+      const profitRows = (profitTxnRows.data ?? []) as Array<{
+        type: string;
+        amount: number | string | null;
+        created_at: string;
+      }>;
+      const profitSince = (start: number) => {
+        const total = profitRows.reduce((sum, row) => {
+          if (!(PROFIT_TYPES as readonly string[]).includes(row.type)) return sum;
+          const createdAt = new Date(row.created_at).getTime();
+          if (!Number.isFinite(createdAt) || createdAt < start) return sum;
+          return sum + Math.abs(Number(row.amount) || 0);
+        }, 0);
+        return round2(total);
+      };
+
+      setProfitStats({
+        today: profitSince(todayStart),
+        week: profitSince(weekStart),
+        month: profitSince(monthStart),
       });
     } catch (err) {
       if (id !== requestId.current) return;
@@ -418,6 +589,11 @@ function DashboardContent() {
         ...current,
         adReward: Math.round((current.adReward + AD_REWARD) * 100) / 100,
       }));
+      setProfitStats((current) => ({
+        today: round2(current.today + AD_REWARD),
+        week: round2(current.week + AD_REWARD),
+        month: round2(current.month + AD_REWARD),
+      }));
       await refreshAdEarnings(user.id);
       setAdOpen(false);
       toast.success("+$0.05 Added to Extra Balance");
@@ -459,6 +635,15 @@ function DashboardContent() {
   const planProgressPct = (planDaysPassed / PLAN_TOTAL_DAYS) * 100;
   const walletAddress =
     profile?.default_wallet_address || summary.latestWithdraw?.wallet_address || null;
+
+  // Loss is illustrative in this model: a fixed display floor plus a small
+  // share of the matching profit window. Nothing is deducted from balances.
+  const lossFromProfit = (profit: number, floor: number) => Math.max(floor, round2(profit * 0.18));
+  const lossStats: ProfitStats = {
+    today: lossFromProfit(profitStats.today, 0.42),
+    week: lossFromProfit(profitStats.week, 2.15),
+    month: lossFromProfit(profitStats.month, 7.8),
+  };
 
   // Strict dual-ad gate: the reward unlocks only when the 15 second timer has
   // elapsed AND the Hilltop video ad reported that it played to the end.
@@ -786,6 +971,33 @@ function DashboardContent() {
                 </dl>
               </section>
             </div>
+
+            <section className="mt-4 rounded-2xl border border-gray-800 bg-gray-900/50 p-5 backdrop-blur">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="text-xs uppercase tracking-widest text-muted-foreground">
+                    Live Chart
+                  </p>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Simulated market movement · updates every 3s
+                  </p>
+                </div>
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-emerald-400">
+                  <span
+                    className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400"
+                    aria-hidden="true"
+                  />
+                  Random Market
+                </span>
+              </div>
+
+              <LiveMarketChart />
+              <ProfitLossPanel profit={profitStats} loss={lossStats} />
+              <p className="mt-3 text-[11px] text-muted-foreground">
+                Loss figures are illustrative for this dashboard design and are not deducted from
+                your balance.
+              </p>
+            </section>
 
             <section className="mt-6 rounded-2xl border bg-card p-5">
               <div className="flex flex-wrap items-start justify-between gap-3">

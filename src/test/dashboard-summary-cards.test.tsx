@@ -66,6 +66,10 @@ vi.mock("@/integrations/supabase/client", () => {
         filters[column] = value;
         return query;
       },
+      in: (column: string, values: string[]) => {
+        filters[column] = values.join(",");
+        return query;
+      },
       order: chain,
       limit: chain,
       insert: chain,
@@ -77,7 +81,14 @@ vi.mock("@/integrations/supabase/client", () => {
       then: (resolve: (value: unknown) => unknown) => {
         let data: unknown[] = [];
         if (table === "transactions") {
-          if (filters["type"] === "ad_earning") {
+          if (filters["type"]?.includes("daily_profit")) {
+            const nowIso = new Date().toISOString();
+            data = [
+              { type: "daily_profit", amount: 3, created_at: nowIso },
+              { type: "ad_earning", amount: 1, created_at: nowIso },
+              { type: "referral_bonus", amount: 2.5, created_at: nowIso },
+            ];
+          } else if (filters["type"] === "ad_earning") {
             data = [
               { id: "ad-1", amount: 0.1, created_at: "2026-09-01T00:00:00.000Z" },
               { id: "ad-2", amount: 0.05, created_at: "2026-09-02T00:00:00.000Z" },
@@ -153,6 +164,20 @@ describe("Dashboard top summary cards", () => {
     expect(screen.getByText("Total withdrawn")).toBeInTheDocument();
     expect(screen.getAllByText("$50.00").length).toBeGreaterThanOrEqual(2);
     expect(screen.getByText("0x35...89E4")).toBeInTheDocument();
+
+    // Live chart card + profit/loss stats.
+    expect(screen.getByText("Live Chart")).toBeInTheDocument();
+    expect(screen.getByText("Random Market")).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "Simulated live market chart" })).toBeInTheDocument();
+    expect(screen.getByText("Today Roket Profit")).toBeInTheDocument();
+    expect(screen.getByText("This Week Roket Profit")).toBeInTheDocument();
+    expect(screen.getByText("This Month Roket Profit")).toBeInTheDocument();
+    // Fixtures: 3 + 1 + 2.5 = 6.5 for all three windows (all rows are "now").
+    expect(screen.getAllByText("+$6.50")).toHaveLength(3);
+    expect(screen.getByText("Today Roket Loss")).toBeInTheDocument();
+    expect(screen.getByText("-$1.17")).toBeInTheDocument();
+    expect(screen.getByText("-$2.15")).toBeInTheDocument();
+    expect(screen.getByText("-$7.80")).toBeInTheDocument();
 
     // Dark glassmorphism styling + responsive 3-column grid.
     const grid = container.querySelector(".mt-8.grid");
