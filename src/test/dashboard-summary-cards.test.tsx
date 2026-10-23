@@ -158,11 +158,18 @@ describe("Dashboard top summary cards", () => {
 
     expect(await screen.findByText("Total Balance")).toBeInTheDocument();
 
-    // Card 1 — total balance + aggregate small rows.
-    expect(screen.getAllByText("$270.00").length).toBeGreaterThanOrEqual(1);
+    // Card 1 — Total Balance is earned money only (daily profit + ads + referrals),
+    // never the user's deposit or wallet balance.
+    expect(screen.getByText("$21.65")).toBeInTheDocument();
+    expect(screen.getByText("Main $9.50 · Extra $12.15")).toBeInTheDocument();
     expect(screen.getByText("+$4.50 / day")).toBeInTheDocument();
     expect(screen.getByText("+$0.15")).toBeInTheDocument();
     expect(screen.getByText("+$12.00")).toBeInTheDocument();
+
+    // Top intro copy and its KYC line were removed; KYC now lives in User Control.
+    expect(screen.queryByText(/Your account is ready/)).toBeNull();
+    expect(screen.queryByText(/Member since/)).toBeNull();
+    expect(screen.getByText("KYC Verified")).toBeInTheDocument();
 
     // Card 2 — active plan from the latest completed deposit.
     expect(screen.getAllByText("Plan 3").length).toBeGreaterThanOrEqual(1);
