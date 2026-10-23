@@ -1428,12 +1428,14 @@ function DashboardContent() {
                     <dt className="text-muted-foreground">Daily Earning</dt>
                     <dd
                       className={
-                        dailyEarning > 0
+                        totalDailyProfit > 0
                           ? "font-semibold text-emerald-400"
                           : "font-semibold text-muted-foreground"
                       }
                     >
-                      {dailyEarning > 0 ? `+${money(dailyEarning)} / day` : "—"}
+                      {`+${money(totalDailyProfit)}${
+                        dailyEarning > 0 ? ` (${money(dailyEarning)}/day)` : ""
+                      }`}
                     </dd>
                   </div>
                   <div className="flex items-center justify-between gap-3">

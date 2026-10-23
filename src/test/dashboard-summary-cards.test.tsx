@@ -162,7 +162,7 @@ describe("Dashboard top summary cards", () => {
     // never the user's deposit or wallet balance.
     expect(screen.getByText("$21.65")).toBeInTheDocument();
     expect(screen.getByText("Main $9.50 · Extra $12.15")).toBeInTheDocument();
-    expect(screen.getByText("+$4.50 / day")).toBeInTheDocument();
+    expect(screen.getByText("+$9.50 ($4.50/day)")).toBeInTheDocument();
     expect(screen.getByText("+$0.15")).toBeInTheDocument();
     expect(screen.getByText("+$12.00")).toBeInTheDocument();
 
