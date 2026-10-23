@@ -67,11 +67,15 @@ vi.mock("@/components/HilltopVideoAd", () => ({
 
 vi.mock("@/integrations/supabase/client", () => {
   const builder = (table: string) => {
+    const filters: Record<string, string> = {};
     const query: Record<string, unknown> = {};
     const chain = () => query;
     Object.assign(query, {
       select: chain,
-      eq: chain,
+      eq: (column: string, value: string) => {
+        filters[column] = value;
+        return query;
+      },
       in: chain,
       order: chain,
       limit: chain,
@@ -81,8 +85,22 @@ vi.mock("@/integrations/supabase/client", () => {
         Promise.resolve({ data: table === "profiles" ? mockProfile : null, error: null }),
       maybeSingle: () =>
         Promise.resolve({ data: table === "profiles" ? mockProfile : null, error: null }),
-      then: (resolve: (value: unknown) => unknown) =>
-        Promise.resolve({ data: [], error: null }).then(resolve),
+      then: (resolve: (value: unknown) => unknown) => {
+        // The ads modal only unlocks from Plan 2 upward, so give this fixture an
+        // active Plan 3 deposit.
+        const data =
+          table === "transactions" && filters["type"] === "deposit"
+            ? [
+                {
+                  plan_name: "Plan 3",
+                  deposit_amount: 180,
+                  amount: 180,
+                  created_at: new Date().toISOString(),
+                },
+              ]
+            : [];
+        return Promise.resolve({ data, error: null }).then(resolve);
+      },
     });
     return query;
   };

@@ -1,5 +1,5 @@
 import type { ComponentType, ReactNode } from "react";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import "@/routes/dashboard";
@@ -214,6 +214,14 @@ describe("Dashboard top summary cards", () => {
     expect(screen.getByText(`+${usd(stats.month.profit)}`)).toBeInTheDocument();
     expect(screen.getByText(`-${usd(stats.month.loss)}`)).toBeInTheDocument();
     expect(screen.getByText("These are Roket platform statistics.")).toBeInTheDocument();
+
+    // Plan 3 is ads-eligible: the card stays fully interactive.
+    const adsCard = screen.getByTestId("ads-reward-card");
+    expect(
+      within(adsCard).queryByText("Upgrade to Plan 2 or higher to unlock Ads Rewards."),
+    ).toBeNull();
+    expect(within(adsCard).queryByRole("link", { name: "Upgrade Plan" })).toBeNull();
+    expect(within(adsCard).getByRole("button", { name: "Watch Ads" })).toBeEnabled();
 
     // Bottom 4-column grid.
     expect(screen.getByRole("heading", { name: "Ads Reward" })).toBeInTheDocument();

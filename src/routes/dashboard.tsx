@@ -2,7 +2,17 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import type { User } from "@supabase/supabase-js";
 import type { ApexOptions } from "apexcharts";
-import { Bell, Gift, Mail, Pencil, Send, Ticket, TrendingDown, TrendingUp } from "lucide-react";
+import {
+  Bell,
+  Gift,
+  Lock,
+  Mail,
+  Pencil,
+  Send,
+  Ticket,
+  TrendingDown,
+  TrendingUp,
+} from "lucide-react";
 import { toast } from "sonner";
 import { AdsterraBanner } from "@/components/AdsterraBanner";
 import { HilltopVideoAd } from "@/components/HilltopVideoAd";
@@ -187,6 +197,14 @@ const PLAN_DAILY_RATES: Record<string, number> = {
   "plan 4": 8,
 };
 
+// Ads rewards unlock from Plan 2 upward; Plan 1 and no plan stay locked.
+const ADS_ELIGIBLE_PLANS = ["plan 2", "plan 3", "plan 4"];
+
+function isAdsEligible(planName: string | null | undefined): boolean {
+  const key = (planName ?? "").trim().toLowerCase();
+  return ADS_ELIGIBLE_PLANS.includes(key);
+}
+
 function planDailyRate(planName: string | null, investment: number): number {
   const key = (planName ?? "").trim().toLowerCase();
   if (PLAN_DAILY_RATES[key] != null) return PLAN_DAILY_RATES[key];
@@ -342,55 +360,84 @@ function PlatformProfitLossPanel({ stats }: { stats: PlatformStats }) {
 function AdsRewardCard({
   earnings,
   onWatchAds,
+  eligible,
 }: {
   earnings: AdEarning[];
   onWatchAds: () => void;
+  eligible: boolean;
 }) {
   return (
-    <section className="rounded-2xl border border-gray-800 bg-gray-900/50 p-5 backdrop-blur">
-      <div className="flex items-center justify-between gap-3">
-        <h2 className="text-sm font-semibold uppercase tracking-widest text-blue-400">
-          Ads Reward
-        </h2>
-        <span className="rounded-full border border-blue-500/25 bg-blue-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-blue-300">
-          Earn
-        </span>
+    <section
+      data-testid="ads-reward-card"
+      className="relative rounded-2xl border border-gray-800 bg-gray-900/50 p-5 backdrop-blur"
+    >
+      <div
+        className={eligible ? undefined : "pointer-events-none select-none opacity-50 blur-sm"}
+        aria-hidden={!eligible}
+      >
+        <div className="flex items-center justify-between gap-3">
+          <h2 className="text-sm font-semibold uppercase tracking-widest text-blue-400">
+            Ads Reward
+          </h2>
+          <span className="rounded-full border border-blue-500/25 bg-blue-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-blue-300">
+            Earn
+          </span>
+        </div>
+
+        <button
+          type="button"
+          onClick={onWatchAds}
+          disabled={!eligible}
+          className="mt-4 w-full rounded-xl bg-gradient-to-r from-emerald-400 to-cyan-400 px-4 py-2.5 text-sm font-bold text-gray-950 shadow-[0_0_20px_rgba(52,211,153,0.35)] transition hover:brightness-110"
+        >
+          Watch Ads
+        </button>
+
+        <p className="mt-5 text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+          Latest 5 Rewards
+        </p>
+        <ul className="mt-2 divide-y divide-gray-800">
+          {earnings.length === 0 ? (
+            <li className="py-3 text-xs text-muted-foreground">
+              No rewards yet — watch your first ad.
+            </li>
+          ) : (
+            earnings.map((row) => (
+              <li key={row.id} className="flex items-center justify-between gap-2 py-2 text-xs">
+                <span className="text-muted-foreground">
+                  {new Date(row.created_at).toLocaleString("en-US", {
+                    month: "short",
+                    day: "numeric",
+                    hour: "numeric",
+                    minute: "2-digit",
+                  })}
+                </span>
+                <span className="font-semibold text-emerald-400">
+                  +{money(Number(row.amount) || 0)}
+                </span>
+              </li>
+            ))
+          )}
+        </ul>
       </div>
 
-      <button
-        type="button"
-        onClick={onWatchAds}
-        className="mt-4 w-full rounded-xl bg-gradient-to-r from-emerald-400 to-cyan-400 px-4 py-2.5 text-sm font-bold text-gray-950 shadow-[0_0_20px_rgba(52,211,153,0.35)] transition hover:brightness-110"
-      >
-        Watch Ads
-      </button>
-
-      <p className="mt-5 text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
-        Latest 5 Rewards
-      </p>
-      <ul className="mt-2 divide-y divide-gray-800">
-        {earnings.length === 0 ? (
-          <li className="py-3 text-xs text-muted-foreground">
-            No rewards yet — watch your first ad.
-          </li>
-        ) : (
-          earnings.map((row) => (
-            <li key={row.id} className="flex items-center justify-between gap-2 py-2 text-xs">
-              <span className="text-muted-foreground">
-                {new Date(row.created_at).toLocaleString("en-US", {
-                  month: "short",
-                  day: "numeric",
-                  hour: "numeric",
-                  minute: "2-digit",
-                })}
-              </span>
-              <span className="font-semibold text-emerald-400">
-                +{money(Number(row.amount) || 0)}
-              </span>
-            </li>
-          ))
-        )}
-      </ul>
+      {!eligible && (
+        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 rounded-2xl bg-gray-950/70 px-4 text-center backdrop-blur-[2px]">
+          <span className="flex h-10 w-10 items-center justify-center rounded-full border border-emerald-500/30 bg-emerald-500/10 shadow-[0_0_20px_rgba(52,211,153,0.25)]">
+            <Lock className="h-5 w-5 text-emerald-400" aria-hidden="true" />
+          </span>
+          <p className="max-w-[15rem] text-xs font-medium leading-relaxed text-gray-200">
+            Upgrade to Plan 2 or higher to unlock Ads Rewards.
+          </p>
+          <Link
+            to="/"
+            hash="pricing"
+            className="rounded-xl bg-gradient-to-r from-emerald-400 to-cyan-400 px-4 py-2 text-sm font-bold text-gray-950 shadow-[0_0_20px_rgba(52,211,153,0.35)] transition hover:brightness-110"
+          >
+            Upgrade Plan
+          </Link>
+        </div>
+      )}
     </section>
   );
 }
@@ -964,7 +1011,13 @@ function DashboardContent() {
     return () => clearTimeout(t);
   }, [adOpen, adSecondsLeft]);
 
+  const adsEligible = isAdsEligible(summary.activePlan?.plan_name);
+
   const openAd = () => {
+    if (!adsEligible) {
+      toast.error("Upgrade to Plan 2 or higher to unlock Ads Rewards.");
+      return;
+    }
     setAdSecondsLeft(AD_SECONDS);
     setVideoDone(false);
     setAdOpen(true);
@@ -1531,7 +1584,7 @@ function DashboardContent() {
             </section>
 
             <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
-              <AdsRewardCard earnings={adEarnings} onWatchAds={openAd} />
+              <AdsRewardCard earnings={adEarnings} onWatchAds={openAd} eligible={adsEligible} />
               <ReferralCard
                 code={referralCode}
                 link={referralLink}
