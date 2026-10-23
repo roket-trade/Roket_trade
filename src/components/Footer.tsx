@@ -23,7 +23,7 @@ export function Footer() {
             </p>
           </div>
 
-          <div className="grid grid-cols-2 gap-10 sm:grid-cols-3">
+          <div className="grid grid-cols-2 gap-10">
             <div>
               <h3 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
                 Product
@@ -49,24 +49,6 @@ export function Footer() {
 
             <div>
               <h3 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
-                Legal
-              </h3>
-              <ul className="mt-4 space-y-2 text-sm">
-                <li>
-                  <Link to="/terms" className="transition-colors hover:text-primary">
-                    Terms of Service
-                  </Link>
-                </li>
-                <li>
-                  <Link to="/privacy" className="transition-colors hover:text-primary">
-                    Privacy Policy
-                  </Link>
-                </li>
-              </ul>
-            </div>
-
-            <div>
-              <h3 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
                 Support
               </h3>
               <ul className="mt-4 space-y-2 text-sm">
@@ -78,9 +60,15 @@ export function Footer() {
         </div>
 
         <div className="mt-12 flex flex-col items-center justify-between gap-6 border-t pt-6 sm:flex-row">
-          <p className="text-xs text-muted-foreground">
-            © 2026 Roket. All rights reserved.
-          </p>
+          <p className="text-xs text-muted-foreground">© 2026 Roket. All rights reserved.</p>
+          <nav aria-label="Legal" className="flex items-center gap-4 text-xs text-muted-foreground">
+            <Link to="/terms" className="transition-colors hover:text-primary">
+              Terms of Service
+            </Link>
+            <Link to="/privacy" className="transition-colors hover:text-primary">
+              Privacy Policy
+            </Link>
+          </nav>
           <div className="flex gap-3">
             {socials.map((s) => (
               <a

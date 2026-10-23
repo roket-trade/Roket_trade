@@ -8,7 +8,10 @@ export const Route = createFileRoute("/terms")({
       { title: "Terms of Service — Roket" },
       { name: "description", content: "The terms that apply when you use Roket trading plans." },
       { property: "og:title", content: "Terms of Service — Roket" },
-      { property: "og:description", content: "The terms that apply when you use Roket trading plans." },
+      {
+        property: "og:description",
+        content: "The terms that apply when you use Roket trading plans.",
+      },
     ],
   }),
   component: Terms,
@@ -44,18 +47,24 @@ const sections = [
 function Terms() {
   return (
     <div className="min-h-screen">
-      <header className="mx-auto flex max-w-4xl items-center justify-between px-6 py-6">
-        <Link to="/" className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-primary">
+      <header className="mx-auto flex max-w-4xl items-center justify-between gap-3 px-4 py-6 sm:px-6">
+        <Link
+          to="/"
+          className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-primary"
+        >
           <ArrowLeft className="h-4 w-4" />
           Back to site
         </Link>
-        <Link to="/signup" className="rounded-lg bg-brand px-5 py-2 font-display text-sm font-bold text-primary-foreground">
+        <Link
+          to="/signup"
+          className="rounded-lg bg-brand px-5 py-2 font-display text-sm font-bold text-primary-foreground"
+        >
           Get Started
         </Link>
       </header>
 
-      <main className="mx-auto max-w-3xl px-6 pb-20">
-        <h1 className="text-4xl font-bold">Terms of Service</h1>
+      <main className="mx-auto max-w-3xl px-4 pb-20 sm:px-6">
+        <h1 className="text-3xl font-bold sm:text-4xl">Terms of Service</h1>
         <p className="mt-3 text-sm text-muted-foreground">Last updated: 19 October 2026</p>
 
         {sections.map((s) => (
