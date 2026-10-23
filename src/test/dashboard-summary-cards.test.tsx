@@ -3,6 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import "@/routes/dashboard";
+import { createPlatformStats } from "@/lib/platform-stats";
 
 const { mockUser, mockProfile, startDate } = vi.hoisted(() => ({
   mockUser: {
@@ -202,14 +203,16 @@ describe("Dashboard top summary cards", () => {
     expect(screen.getByText("This Week Platform Loss")).toBeInTheDocument();
     expect(screen.getByText("This Month Platform Loss")).toBeInTheDocument();
 
-    // Math.random is pinned to 0.5: today = 30k (loss 30k/9), week = 180k,
-    // month = 835k.
-    expect(await screen.findByText("+$30,000.00")).toBeInTheDocument();
-    expect(screen.getByText("+$180,000.00")).toBeInTheDocument();
-    expect(screen.getByText("+$835,000.00")).toBeInTheDocument();
-    expect(screen.getByText("-$3,333.33")).toBeInTheDocument();
-    expect(screen.getByText("-$20,000.00")).toBeInTheDocument();
-    expect(screen.getByText("-$92,777.78")).toBeInTheDocument();
+    // Platform stats are seeded by the current date, so they are stable across
+    // refreshes instead of re-rolling on every mount.
+    const stats = createPlatformStats();
+    const usd = (n: number) => n.toLocaleString("en-US", { style: "currency", currency: "USD" });
+    expect(await screen.findByText(`+${usd(stats.today.profit)}`)).toBeInTheDocument();
+    expect(screen.getByText(`-${usd(stats.today.loss)}`)).toBeInTheDocument();
+    expect(screen.getByText(`+${usd(stats.week.profit)}`)).toBeInTheDocument();
+    expect(screen.getByText(`-${usd(stats.week.loss)}`)).toBeInTheDocument();
+    expect(screen.getByText(`+${usd(stats.month.profit)}`)).toBeInTheDocument();
+    expect(screen.getByText(`-${usd(stats.month.loss)}`)).toBeInTheDocument();
     expect(screen.getByText("These are Roket platform statistics.")).toBeInTheDocument();
 
     // Bottom 4-column grid.
@@ -290,5 +293,32 @@ describe("Dashboard top summary cards", () => {
       expect(card.className).toContain("border-gray-800");
       expect(card.className).toContain("backdrop-blur");
     }
+  });
+});
+
+describe("Platform statistics seeding", () => {
+  it("returns identical stats for the same day and keeps losses 8-10x below profits", () => {
+    const first = createPlatformStats();
+    // Same date seed on every call — a refresh must not re-roll the numbers.
+    for (let i = 0; i < 5; i += 1) {
+      expect(createPlatformStats()).toEqual(first);
+    }
+
+    expect(first.today.profit).toBeGreaterThanOrEqual(10_000);
+    expect(first.today.profit).toBeLessThanOrEqual(50_000);
+    expect(first.week.profit).toBeGreaterThanOrEqual(first.today.profit * 5);
+    expect(first.month.profit).toBeGreaterThanOrEqual(first.week.profit * 4);
+
+    for (const window of [first.today, first.week, first.month]) {
+      const ratio = window.profit / window.loss;
+      expect(ratio).toBeGreaterThanOrEqual(8);
+      expect(ratio).toBeLessThanOrEqual(10.01);
+    }
+
+    // The seed rolls over on the next calendar day.
+    const tomorrow = createPlatformStats(new Date(Date.now() + 24 * 60 * 60 * 1000));
+    expect(tomorrow.today).not.toEqual(first.today);
+    expect(tomorrow.today.profit).toBeGreaterThanOrEqual(10_000);
+    expect(tomorrow.today.profit).toBeLessThanOrEqual(50_000);
   });
 });

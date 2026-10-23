@@ -10,6 +10,8 @@ import { KycModal } from "@/components/KycModal";
 import { RequireAuth } from "@/components/RequireAuth";
 import { supabase } from "@/integrations/supabase/client";
 import type { Tables } from "@/integrations/supabase/types";
+import { createPlatformStats } from "@/lib/platform-stats";
+import type { PlatformStats } from "@/lib/platform-stats";
 
 export const Route = createFileRoute("/dashboard")({
   head: () => ({
@@ -82,17 +84,6 @@ type Candle = {
   y: [number, number, number, number];
 };
 
-type PlatformWindow = {
-  profit: number;
-  loss: number;
-};
-
-type PlatformStats = {
-  today: PlatformWindow;
-  week: PlatformWindow;
-  month: PlatformWindow;
-};
-
 const PLATFORM_PROFIT_ROWS: Array<[keyof PlatformStats, string]> = [
   ["today", "Today Platform Profit"],
   ["week", "This Week Platform Profit"],
@@ -116,31 +107,6 @@ const CANDLE_COUNT = 56;
 const CANDLE_STEP_MS = 60_000;
 const CHART_TICK_MS = 3000;
 const TICKS_PER_CANDLE = CANDLE_STEP_MS / CHART_TICK_MS;
-
-function randomBetween(min: number, max: number): number {
-  return min + Math.random() * (max - min);
-}
-
-/**
- * Platform-wide mock statistics. Losses are always 8–10x smaller than the
- * matching profit window, mirroring the design brief.
- */
-function createPlatformStats(): PlatformStats {
-  const todayProfit = randomBetween(10_000, 50_000);
-  const todayLoss = todayProfit / randomBetween(8, 10);
-
-  const weekProfit = todayProfit * 5 + randomBetween(15_000, 45_000);
-  const weekLoss = weekProfit / randomBetween(8, 10);
-
-  const monthProfit = weekProfit * 4 + randomBetween(50_000, 180_000);
-  const monthLoss = monthProfit / randomBetween(8, 10);
-
-  return {
-    today: { profit: round2(todayProfit), loss: round2(todayLoss) },
-    week: { profit: round2(weekProfit), loss: round2(weekLoss) },
-    month: { profit: round2(monthProfit), loss: round2(monthLoss) },
-  };
-}
 
 function makeCandle(open: number, time: number): Candle {
   const close = Math.max(100, open + (Math.random() - 0.48) * 180);
