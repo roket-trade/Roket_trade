@@ -62,6 +62,7 @@ type RecentWithdrawal = {
 type DashboardSummary = {
   adReward: number;
   referralBonus: number;
+  dailyProfit: number;
   totalWithdrawn: number;
   latestWithdraw: LatestWithdraw | null;
   activePlan: ActivePlan | null;
@@ -70,6 +71,7 @@ type DashboardSummary = {
 const EMPTY_SUMMARY: DashboardSummary = {
   adReward: 0,
   referralBonus: 0,
+  dailyProfit: 0,
   totalWithdrawn: 0,
   latestWithdraw: null,
   activePlan: null,
@@ -580,6 +582,7 @@ function UserControlCard({
   dailyProfit,
   totalProfit,
   duration,
+  kycVerified,
   onChangePassword,
   onEditPhone,
   onCancelPlan,
@@ -592,6 +595,7 @@ function UserControlCard({
   dailyProfit: number;
   totalProfit: number;
   duration: string;
+  kycVerified: boolean;
   onChangePassword: () => void;
   onEditPhone: () => void;
   onCancelPlan: () => void;
@@ -603,9 +607,20 @@ function UserControlCard({
         <h2 className="text-sm font-semibold uppercase tracking-widest text-blue-400">
           User Control
         </h2>
-        <span className="rounded-full border border-blue-500/25 bg-blue-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-blue-300">
-          Account
-        </span>
+        <div className="flex flex-wrap items-center justify-end gap-1.5">
+          <span
+            className={
+              kycVerified
+                ? "rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-emerald-400"
+                : "rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-amber-400"
+            }
+          >
+            {kycVerified ? "KYC Verified" : "KYC Pending"}
+          </span>
+          <span className="rounded-full border border-blue-500/25 bg-blue-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-blue-300">
+            Account
+          </span>
+        </div>
       </div>
 
       <dl className="mt-4 space-y-3 text-xs">
@@ -718,7 +733,6 @@ function DashboardContent() {
   const [adEarnings, setAdEarnings] = useState<AdEarning[]>([]);
   const [referrals, setReferrals] = useState<ReferralMember[]>([]);
   const [recentWithdrawals, setRecentWithdrawals] = useState<RecentWithdrawal[]>([]);
-  const [planTotalProfit, setPlanTotalProfit] = useState(0);
   const [summary, setSummary] = useState<DashboardSummary>(EMPTY_SUMMARY);
   const [platformStats, setPlatformStats] = useState<PlatformStats>(EMPTY_PLATFORM_STATS);
   const [withdrawOpen, setWithdrawOpen] = useState(false);
@@ -883,9 +897,21 @@ function DashboardContent() {
           }
         | undefined;
 
+      const dailyProfitTotal = round2(
+        Math.max(
+          0,
+          (dailyProfitRows.data ?? []).reduce(
+            (total, row) =>
+              total + Number((row as { amount?: number | string | null }).amount ?? 0),
+            0,
+          ),
+        ),
+      );
+
       setSummary({
-        adReward: sumAmounts(adRows.data),
-        referralBonus: sumAmounts(bonusRows.data),
+        adReward: round2(sumAmounts(adRows.data)),
+        referralBonus: round2(sumAmounts(bonusRows.data)),
+        dailyProfit: dailyProfitTotal,
         totalWithdrawn: sumAmounts(withdrawals),
         latestWithdraw: withdrawals[0]
           ? {
@@ -906,11 +932,6 @@ function DashboardContent() {
       setAdEarnings((adEarningsRows.data ?? []) as AdEarning[]);
       setReferrals((referralRows.data ?? []) as ReferralMember[]);
       setRecentWithdrawals((recentWithdrawalRows.data ?? []) as RecentWithdrawal[]);
-      const dailyProfitTotal = (dailyProfitRows.data ?? []).reduce(
-        (total, row) => total + Number((row as { amount?: number | string | null }).amount ?? 0),
-        0,
-      );
-      setPlanTotalProfit(round2(Math.max(0, dailyProfitTotal)));
     } catch (err) {
       if (id !== requestId.current) return;
       console.error("[dashboard] fetchProfile threw", err);
@@ -955,7 +976,6 @@ function DashboardContent() {
     referralCode && typeof window !== "undefined"
       ? `https://roket.bond/signup?ref=${referralCode}`
       : "";
-  const memberSince = profile?.created_at ?? user?.created_at;
   // The KYC gate is only trustworthy once the profile row has been read:
   // loading === false, no fetch error, and a real row in hand.
   const profileLoaded = !loading && !profileError && profile !== null;
@@ -1067,6 +1087,14 @@ function DashboardContent() {
   };
 
   const totalBalance = mainBalance + extraBalance;
+
+  // Total Balance card shows money EARNED only — never deposits. Main is the
+  // sum of daily_profit transactions; Extra is ads + referral bonuses.
+  const totalDailyProfit = summary.dailyProfit;
+  const totalAdsReward = summary.adReward;
+  const totalReferralBonus = summary.referralBonus;
+  const extraEarned = round2(totalAdsReward + totalReferralBonus);
+  const totalEarned = round2(totalDailyProfit + extraEarned);
 
   // Top-card derived values.
   const planStartedAt = profile?.plan_started_at ?? summary.activePlan?.started_at ?? null;
@@ -1377,15 +1405,6 @@ function DashboardContent() {
                 Dashboard
               </p>
               <h1 className="mt-2 font-display text-4xl font-bold">Welcome back, {fullName}</h1>
-              <p className="mt-3 max-w-2xl text-muted-foreground">
-                Your account is ready. Choose a plan, submit your deposit, and our team will verify
-                it manually.
-              </p>
-              <p className="mt-2 text-xs text-muted-foreground">
-                {email ? `${email} · ` : ""}
-                Member since {formatDay(memberSince ?? null)} · KYC{" "}
-                {kycVerified ? "verified" : kycStatus || "required"}
-              </p>
             </section>
 
             <div className="mt-8 grid gap-4 md:grid-cols-3">
@@ -1399,10 +1418,10 @@ function DashboardContent() {
                   </span>
                 </div>
                 <p className="mt-3 font-display text-3xl font-bold text-white">
-                  {money(Number.isFinite(totalBalance) ? totalBalance : 0)}
+                  {money(Number.isFinite(totalEarned) ? totalEarned : 0)}
                 </p>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  Main {money(mainBalance)} · Extra {money(extraBalance)}
+                  Main {money(totalDailyProfit)} · Extra {money(extraEarned)}
                 </p>
                 <dl className="mt-4 space-y-2 border-t border-gray-800 pt-4 text-sm">
                   <div className="flex items-center justify-between gap-3">
@@ -1421,24 +1440,24 @@ function DashboardContent() {
                     <dt className="text-muted-foreground">Ads Reward</dt>
                     <dd
                       className={
-                        summary.adReward > 0
+                        totalAdsReward > 0
                           ? "font-semibold text-emerald-400"
                           : "font-semibold text-muted-foreground"
                       }
                     >
-                      {summary.adReward > 0 ? `+${money(summary.adReward)}` : money(0)}
+                      {totalAdsReward > 0 ? `+${money(totalAdsReward)}` : money(0)}
                     </dd>
                   </div>
                   <div className="flex items-center justify-between gap-3">
                     <dt className="text-muted-foreground">Referral Bonus</dt>
                     <dd
                       className={
-                        summary.referralBonus > 0
+                        totalReferralBonus > 0
                           ? "font-semibold text-emerald-400"
                           : "font-semibold text-muted-foreground"
                       }
                     >
-                      {summary.referralBonus > 0 ? `+${money(summary.referralBonus)}` : money(0)}
+                      {totalReferralBonus > 0 ? `+${money(totalReferralBonus)}` : money(0)}
                     </dd>
                   </div>
                 </dl>
@@ -1565,8 +1584,9 @@ function DashboardContent() {
                 planName={activePlanName}
                 deposit={investmentAmount}
                 dailyProfit={dailyEarning}
-                totalProfit={planTotalProfit}
+                totalProfit={summary.dailyProfit}
                 duration={`${PLAN_TOTAL_DAYS} Days`}
+                kycVerified={kycVerified}
                 onChangePassword={openPassword}
                 onEditPhone={openPhone}
                 onCancelPlan={requestCancelPlan}
