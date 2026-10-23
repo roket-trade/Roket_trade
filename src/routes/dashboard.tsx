@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import type { User } from "@supabase/supabase-js";
 import type { ApexOptions } from "apexcharts";
-import { Bell, Gift, Mail, Send, Ticket, TrendingDown, TrendingUp } from "lucide-react";
+import { Bell, Gift, Mail, Pencil, Send, Ticket, TrendingDown, TrendingUp } from "lucide-react";
 import { toast } from "sonner";
 import { AdsterraBanner } from "@/components/AdsterraBanner";
 import { HilltopVideoAd } from "@/components/HilltopVideoAd";
@@ -17,7 +17,10 @@ export const Route = createFileRoute("/dashboard")({
       { title: "Dashboard — Roket" },
       { name: "description", content: "Manage your Roket account, referral link, and plans." },
       { property: "og:title", content: "Dashboard — Roket" },
-      { property: "og:description", content: "Manage your Roket account, referral link, and plans." },
+      {
+        property: "og:description",
+        content: "Manage your Roket account, referral link, and plans.",
+      },
     ],
   }),
   component: Dashboard,
@@ -246,8 +249,7 @@ function formatDay(iso: string | null): string {
 
 const WITHDRAW_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000;
 
-const money = (n: number) =>
-  n.toLocaleString("en-US", { style: "currency", currency: "USD" });
+const money = (n: number) => n.toLocaleString("en-US", { style: "currency", currency: "USD" });
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
@@ -578,6 +580,8 @@ function UserControlCard({
   dailyProfit,
   totalProfit,
   duration,
+  onChangePassword,
+  onEditPhone,
   onCancelPlan,
   onLogout,
 }: {
@@ -588,6 +592,8 @@ function UserControlCard({
   dailyProfit: number;
   totalProfit: number;
   duration: string;
+  onChangePassword: () => void;
+  onEditPhone: () => void;
   onCancelPlan: () => void;
   onLogout: () => void;
 }) {
@@ -613,7 +619,17 @@ function UserControlCard({
           <dt className="text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
             Phone Number
           </dt>
-          <dd className="mt-0.5 truncate text-foreground">{phone?.trim() || "Not set"}</dd>
+          <dd className="mt-0.5 flex items-center justify-between gap-2">
+            <span className="truncate text-foreground">{phone?.trim() || "Not set"}</span>
+            <button
+              type="button"
+              onClick={onEditPhone}
+              aria-label="Edit phone number"
+              className="grid h-6 w-6 shrink-0 place-items-center rounded-md border border-gray-700 text-muted-foreground transition hover:border-primary hover:text-primary"
+            >
+              <Pencil className="h-3 w-3" aria-hidden="true" />
+            </button>
+          </dd>
         </div>
       </dl>
 
@@ -653,6 +669,13 @@ function UserControlCard({
         >
           Upgrade Plan
         </Link>
+        <button
+          type="button"
+          onClick={onChangePassword}
+          className="w-full rounded-xl border border-gray-700 px-3 py-2 text-xs font-semibold text-muted-foreground transition hover:text-foreground"
+        >
+          Change Pass
+        </button>
         <button
           type="button"
           onClick={onCancelPlan}
@@ -706,6 +729,13 @@ function DashboardContent() {
   const [walletOpen, setWalletOpen] = useState(false);
   const [walletInput, setWalletInput] = useState("");
   const [walletBusy, setWalletBusy] = useState(false);
+  const [passwordOpen, setPasswordOpen] = useState(false);
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [passwordBusy, setPasswordBusy] = useState(false);
+  const [phoneOpen, setPhoneOpen] = useState(false);
+  const [phoneInput, setPhoneInput] = useState("");
+  const [phoneBusy, setPhoneBusy] = useState(false);
 
   // Stable profile fetcher. It lives OUTSIDE the mount effect so the Retry
   // button can call it directly; the effect below only kicks off the first run.
@@ -909,7 +939,7 @@ function DashboardContent() {
       toast.error(error.message);
       return;
     }
-    navigate({ to: "/login", replace: true });
+    navigate({ to: "/", replace: true });
   };
 
   const fullName =
@@ -1010,9 +1040,7 @@ function DashboardContent() {
         throw new Error(msg);
       }
 
-      setProfile((current) =>
-        current ? { ...current, extra_balance: nextExtra } : current,
-      );
+      setProfile((current) => (current ? { ...current, extra_balance: nextExtra } : current));
       setSummary((current) => ({
         ...current,
         adReward: Math.round((current.adReward + AD_REWARD) * 100) / 100,
@@ -1209,6 +1237,68 @@ function DashboardContent() {
       toast.error(err instanceof Error ? err.message : "Couldn't save your wallet.");
     } finally {
       setWalletBusy(false);
+    }
+  };
+
+  const openPassword = () => {
+    setNewPassword("");
+    setConfirmPassword("");
+    setPasswordOpen(true);
+  };
+
+  const submitPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (passwordBusy) return;
+    if (newPassword.length < 6) {
+      toast.error("Password must be at least 6 characters.");
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      toast.error("Passwords do not match.");
+      return;
+    }
+    setPasswordBusy(true);
+    try {
+      const { error } = await supabase.auth.updateUser({ password: newPassword });
+      if (error) throw new Error(error.message);
+      setPasswordOpen(false);
+      setNewPassword("");
+      setConfirmPassword("");
+      toast.success("Password updated successfully.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't update your password.");
+    } finally {
+      setPasswordBusy(false);
+    }
+  };
+
+  const openPhone = () => {
+    setPhoneInput(profile?.phone_number ?? "");
+    setPhoneOpen(true);
+  };
+
+  const savePhone = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user || phoneBusy) return;
+    const value = phoneInput.trim();
+    if (!value) {
+      toast.error("Enter your phone number.");
+      return;
+    }
+    setPhoneBusy(true);
+    try {
+      const { error } = await supabase
+        .from("profiles")
+        .update({ phone_number: value })
+        .eq("id", user.id);
+      if (error) throw new Error(error.message);
+      setProfile((current) => (current ? { ...current, phone_number: value } : current));
+      setPhoneOpen(false);
+      toast.success("Phone number updated.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't update your phone number.");
+    } finally {
+      setPhoneBusy(false);
     }
   };
 
@@ -1477,6 +1567,8 @@ function DashboardContent() {
                 dailyProfit={dailyEarning}
                 totalProfit={planTotalProfit}
                 duration={`${PLAN_TOTAL_DAYS} Days`}
+                onChangePassword={openPassword}
+                onEditPhone={openPhone}
                 onCancelPlan={requestCancelPlan}
                 onLogout={signOut}
               />
@@ -1562,6 +1654,143 @@ function DashboardContent() {
           </>
         )}
       </main>
+
+      {passwordOpen && (
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto overscroll-contain bg-black/70 p-4 sm:items-center">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="password-title"
+            className="my-auto w-full max-w-md rounded-2xl border bg-card p-5 shadow-glow sm:p-6"
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.25em] text-primary">
+                  Security
+                </p>
+                <h2 id="password-title" className="mt-1 font-display text-xl font-bold">
+                  Change Password
+                </h2>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Choose a new password for your Roket account.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => !passwordBusy && setPasswordOpen(false)}
+                disabled={passwordBusy}
+                aria-label="Close change password"
+                className="rounded-lg border border-border px-3 py-1.5 text-sm font-semibold text-muted-foreground hover:text-foreground disabled:opacity-50"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={submitPassword} className="mt-4 space-y-4">
+              <div className="space-y-1.5">
+                <label htmlFor="new-password" className="text-sm font-medium">
+                  New Password
+                </label>
+                <input
+                  id="new-password"
+                  type="password"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  placeholder="At least 6 characters"
+                  autoComplete="new-password"
+                  required
+                  minLength={6}
+                  className="w-full rounded-lg border bg-muted px-4 py-3 text-sm outline-none focus:border-primary"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label htmlFor="confirm-password" className="text-sm font-medium">
+                  Confirm Password
+                </label>
+                <input
+                  id="confirm-password"
+                  type="password"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  placeholder="Repeat your new password"
+                  autoComplete="new-password"
+                  required
+                  minLength={6}
+                  className="w-full rounded-lg border bg-muted px-4 py-3 text-sm outline-none focus:border-primary"
+                />
+              </div>
+
+              <button
+                type="submit"
+                disabled={passwordBusy || !newPassword || !confirmPassword}
+                className="w-full rounded-lg bg-brand py-3 font-display font-bold text-primary-foreground shadow-glow disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {passwordBusy ? "Updating…" : "Update Password"}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {phoneOpen && (
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto overscroll-contain bg-black/70 p-4 sm:items-center">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="phone-title"
+            className="my-auto w-full max-w-md rounded-2xl border bg-card p-5 shadow-glow sm:p-6"
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.25em] text-primary">
+                  Account
+                </p>
+                <h2 id="phone-title" className="mt-1 font-display text-xl font-bold">
+                  Edit Phone Number
+                </h2>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  We use this number to reach you about your account.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => !phoneBusy && setPhoneOpen(false)}
+                disabled={phoneBusy}
+                aria-label="Close edit phone number"
+                className="rounded-lg border border-border px-3 py-1.5 text-sm font-semibold text-muted-foreground hover:text-foreground disabled:opacity-50"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={savePhone} className="mt-4 space-y-4">
+              <div className="space-y-1.5">
+                <label htmlFor="phone-number" className="text-sm font-medium">
+                  Phone Number
+                </label>
+                <input
+                  id="phone-number"
+                  type="tel"
+                  value={phoneInput}
+                  onChange={(e) => setPhoneInput(e.target.value)}
+                  placeholder="+1 555 010 2030"
+                  autoComplete="tel"
+                  className="w-full rounded-lg border bg-muted px-4 py-3 text-sm outline-none focus:border-primary"
+                />
+              </div>
+
+              <button
+                type="submit"
+                disabled={phoneBusy || !phoneInput.trim()}
+                className="w-full rounded-lg bg-brand py-3 font-display font-bold text-primary-foreground shadow-glow disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {phoneBusy ? "Saving…" : "Save Phone Number"}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
 
       {walletOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
@@ -1663,7 +1892,9 @@ function DashboardContent() {
                     onClick={() => setWithdrawSource(key)}
                     className={`rounded-lg px-3 py-2 text-sm font-semibold transition ${withdrawSource === key ? "bg-brand text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}
                   >
-                    {key === "main" ? `Main (${money(mainBalance)})` : `Extra (${money(extraBalance)})`}
+                    {key === "main"
+                      ? `Main (${money(mainBalance)})`
+                      : `Extra (${money(extraBalance)})`}
                   </button>
                 ))}
               </div>
@@ -1708,7 +1939,9 @@ function DashboardContent() {
 
               <button
                 type="submit"
-                disabled={withdrawBusy || withdrawLocked || !withdrawAmountValid || !withdrawAddress.trim()}
+                disabled={
+                  withdrawBusy || withdrawLocked || !withdrawAmountValid || !withdrawAddress.trim()
+                }
                 className="w-full rounded-lg bg-brand py-3 font-display font-bold text-primary-foreground shadow-glow disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {withdrawBusy ? "Submitting…" : "Submit Withdrawal"}

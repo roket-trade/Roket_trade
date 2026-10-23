@@ -22,4 +22,11 @@ describe("App routing", () => {
 
     expect(matches.at(-1)?.routeId).toBe("/checkout");
   });
+
+  it("matches the legal routes", () => {
+    const router = createRouter({ routeTree, context: { queryClient: new QueryClient() } });
+
+    expect(router.matchRoutes("/terms").at(-1)?.routeId).toBe("/terms");
+    expect(router.matchRoutes("/privacy").at(-1)?.routeId).toBe("/privacy");
+  });
 });
