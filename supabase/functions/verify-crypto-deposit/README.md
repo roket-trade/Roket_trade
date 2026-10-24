@@ -49,11 +49,16 @@ caller cannot underpay while claiming a cheaper plan.
 
 - `completed` — deposit flipped to `completed`; `profiles.plan_name`,
   `plan_started_at` and `plan_expires_at` (now + 365 days) were set.
-- `pending` (HTTP 202) — not mined/confirmed yet. The pg_cron job retries it.
-- `rejected` — definitive mismatch; `transactions.rejection_reason` explains why.
+- `pending` (HTTP 200) — well-formed hash, not mined/confirmed yet. The pg_cron
+  job retries it on the next tick (bounded by `verification_attempts`).
+- `rejected` (HTTP 200) — definitive mismatch **or** an unusable hash / RPC
+  error; `transactions.rejection_reason` explains why.
 
-RPC outages return HTTP 502 and leave the deposit `pending` — a failed RPC is not
-proof of a bad payment.
+Malformed hashes are rejected before any RPC call (e.g. `trefdhdt564uf6ifhr7895`
+on BEP20, which previously caused a node error and a 502). A thrown RPC error is
+also caught, stored as `rejection_reason = 'Invalid transaction hash or
+transaction not found'`, and returned as HTTP 200 so the cron poller stops
+retrying that hash. Only server configuration faults reply `pending` and retry.
 
 ## Deploy
 

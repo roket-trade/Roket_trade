@@ -5,9 +5,12 @@
 //   - SOL:   Solana `getTransaction` (SPL token balance delta, or native SOL)
 //
 // On success it marks the deposit `completed` and activates the user's plan.
-// On a definitive on-chain mismatch it marks the deposit `rejected`.
-// If the transaction is not mined/confirmed yet it leaves the deposit `pending`
-// so the 30-second pg_cron poller retries it.
+// On a definitive on-chain mismatch, a malformed hash, or an RPC error it marks
+// the deposit `rejected` with a reason and returns HTTP 200 so the cron poller
+// does not retry the same bad hash.
+// If the transaction is valid but not mined/confirmed yet it leaves the deposit
+// `pending` so the 30-second pg_cron poller retries it (bounded by
+// verification_attempts).
 //
 // Deploy:
 //   supabase functions deploy verify-crypto-deposit --no-verify-jwt
@@ -45,6 +48,16 @@ const SOL_TOKEN_SYMBOL = Deno.env.get("SOL_TOKEN_SYMBOL") ?? "USDT";
 const PLAN_AMOUNTS: Record<string, number> = { "1": 60, "2": 120, "3": 180, "4": 250 };
 const PLAN_DAYS = 365;
 const TRANSFER_TOPIC = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
+
+const INVALID_TX_REASON = "Invalid transaction hash or transaction not found";
+/** BEP20 / EVM transaction hash: 0x + 32 bytes. */
+const BEP20_HASH_RE = /^0x[0-9a-f]{64}$/;
+/**
+ * Solana signatures are base58-encoded 64-byte values. Real signatures are
+ * normally 87-88 characters; allow 64-90 for leading-zero encodings while still
+ * rejecting arbitrary strings like "trefdhdt564uf6ifhr7895" up front.
+ */
+const SOLANA_SIGNATURE_RE = /^[1-9A-HJ-NP-Za-km-z]{64,90}$/;
 
 type Network = "BEP20" | "SOL";
 
@@ -193,9 +206,28 @@ function platformWallet(network: Network): string {
 
 async function verifyBep20(txHash: string, expectedUsd: number): Promise<VerifyOutcome> {
   const platform = platformWallet("BEP20");
-  const receipt = await rpc<EvmReceipt | null>(BSC_RPC_URL, "eth_getTransactionReceipt", [txHash]);
+  const hash = txHash.trim().toLowerCase();
 
-  // Not mined yet — the cron poller calls us again on the next tick.
+  // Reject malformed input before it reaches the node. This is the class of
+  // error that previously surfaced as a 502, e.g.:
+  //   invalid argument 0: json: cannot unmarshal hex string without 0x prefix
+  //   into Go value of type common.Hash
+  if (!BEP20_HASH_RE.test(hash)) {
+    return { status: "rejected", reason: INVALID_TX_REASON };
+  }
+
+  let receipt: EvmReceipt | null;
+  try {
+    receipt = await rpc<EvmReceipt | null>(BSC_RPC_URL, "eth_getTransactionReceipt", [hash]);
+  } catch (error) {
+    // A thrown RPC error (bad params, provider rejection, etc.) means this hash
+    // can never verify. Mark it rejected instead of retrying every 30 seconds.
+    const message = error instanceof Error ? error.message : "RPC request failed";
+    console.error("[verify-crypto-deposit] BEP20 RPC failed", { hash, message });
+    return { status: "rejected", reason: INVALID_TX_REASON };
+  }
+
+  // Well-formed but not mined yet — the cron poller calls us again next tick.
   if (!receipt) return { status: "pending", reason: "Transaction is not mined yet" };
   if (receipt.status && receipt.status !== "0x1") {
     return { status: "rejected", reason: "Transaction reverted on-chain" };
@@ -239,14 +271,30 @@ async function verifyBep20(txHash: string, expectedUsd: number): Promise<VerifyO
 
 async function verifySolana(txHash: string, expectedUsd: number): Promise<VerifyOutcome> {
   const platform = platformWallet("SOL");
-  const tx = await rpc<SolTransaction | null>(SOLANA_RPC_URL, "getTransaction", [
-    txHash,
-    {
-      encoding: "jsonParsed",
-      commitment: "confirmed",
-      maxSupportedTransactionVersion: 0,
-    },
-  ]);
+  const signature = txHash.trim();
+
+  // Reject malformed signatures before calling the RPC. Solana returns a JSON-RPC
+  // error for bad input, which used to bubble up as a 502.
+  if (!SOLANA_SIGNATURE_RE.test(signature)) {
+    return { status: "rejected", reason: INVALID_TX_REASON };
+  }
+
+  let tx: SolTransaction | null;
+  try {
+    tx = await rpc<SolTransaction | null>(SOLANA_RPC_URL, "getTransaction", [
+      signature,
+      {
+        encoding: "jsonParsed",
+        commitment: "confirmed",
+        maxSupportedTransactionVersion: 0,
+      },
+    ]);
+  } catch (error) {
+    // Invalid signature / provider-side parsing error: reject, do not retry.
+    const message = error instanceof Error ? error.message : "RPC request failed";
+    console.error("[verify-crypto-deposit] Solana RPC failed", { signature, message });
+    return { status: "rejected", reason: INVALID_TX_REASON };
+  }
 
   if (!tx) return { status: "pending", reason: "Transaction is not confirmed yet" };
   if (tx.meta?.err) return { status: "rejected", reason: "Transaction failed on-chain" };
@@ -444,15 +492,17 @@ async function handle(request: Request): Promise<Response> {
         ? await verifyBep20(chainHash, expectedUsd)
         : await verifySolana(chainHash, expectedUsd);
   } catch (error) {
-    // RPC / configuration trouble is not proof of a bad payment: keep the
-    // deposit pending so the next cron tick retries it.
+    // Only server-side/configuration faults reach this point (RPC errors are
+    // handled and rejected inside the verify helpers). Never return 5xx to the
+    // cron poller: reply 200 with pending so the next tick retries, bounded by
+    // verification_attempts.
     const message = error instanceof Error ? error.message : "Verification failed";
-    console.error("[verify-crypto-deposit] rpc error", { txHash, network, message });
+    console.error("[verify-crypto-deposit] verification error", { txHash, network, message });
     await admin
       .from("transactions")
       .update({ last_verification_at: new Date().toISOString() })
       .eq("id", row.id);
-    return json({ ok: false, status: "pending", tx_hash: txHash, error: message }, 502);
+    return json({ ok: false, status: "pending", tx_hash: txHash, error: message }, 200);
   }
 
   const now = new Date();
@@ -462,7 +512,7 @@ async function handle(request: Request): Promise<Response> {
       .from("transactions")
       .update({ last_verification_at: now.toISOString() })
       .eq("id", row.id);
-    return json({ ok: true, status: "pending", tx_hash: txHash, reason: outcome.reason }, 202);
+    return json({ ok: true, status: "pending", tx_hash: txHash, reason: outcome.reason }, 200);
   }
 
   if (outcome.status === "rejected") {
