@@ -98,7 +98,51 @@ const EMPTY_SUMMARY: DashboardSummary = {
   totalWithdrawn: 0,
   latestWithdraw: null,
   activePlan: null,
+  totalDeposited: 0,
 };
+
+type WalletType = "bep20" | "solana" | "trc20";
+
+const WALLET_LABELS: Record<WalletType, string> = {
+  bep20: "BEP20",
+  solana: "Solana",
+  trc20: "TRC20",
+};
+
+type SavedWallets = {
+  bep20?: string | null;
+  solana?: string | null;
+  trc20?: string | null;
+};
+
+/** Show only the first 4 and last 4 characters of a wallet address. */
+function maskWallet(address: string): string {
+  const trimmed = address.trim();
+  if (trimmed.length <= 8) return trimmed;
+  return `${trimmed.slice(0, 4)}...${trimmed.slice(-4)}`;
+}
+
+const WALLET_TYPES: WalletType[] = ["bep20", "solana", "trc20"];
+
+/** Return the saved wallets that actually have an address, in a fixed order. */
+function walletOptions(
+  wallets: SavedWallets | undefined,
+): Array<{ type: WalletType; address: string }> {
+  const types: WalletType[] = ["bep20", "solana", "trc20"];
+  return types
+    .map((type) => ({ type, address: String(wallets?.[type] ?? "") }))
+    .filter((o) => o.address.trim().length > 0);
+}
+
+/** Sum every completed deposit for the user (their total placed capital). */
+function sumDeposits(
+  rows: Array<{ deposit_amount?: number | string | null }> | null,
+): number {
+  return (rows ?? []).reduce(
+    (total, row) => total + (Number(row.deposit_amount ?? 0) || 0),
+    0,
+  );
+}
 
 type Candle = {
   x: number;
@@ -245,6 +289,8 @@ function formatDay(iso: string | null): string {
 }
 
 const WITHDRAW_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000;
+const HOLD_SECONDS_MS = 3000;
+const HOLD_TICK_MS = 50;
 
 const money = (n: number) => n.toLocaleString("en-US", { style: "currency", currency: "USD" });
 
@@ -539,14 +585,14 @@ function WithdrawCard({
   withdrawals,
   locked,
   lockedReason,
-  onWithdraw,
+  onWithdrawal,
   onSetWallet,
 }: {
   available: number;
   withdrawals: RecentWithdrawal[];
   locked: boolean;
   lockedReason: string;
-  onWithdraw: () => void;
+  onWithdrawal: () => void;
   onSetWallet: () => void;
 }) {
   return (
@@ -561,10 +607,10 @@ function WithdrawCard({
       <div className="mt-4 grid grid-cols-2 gap-2">
         <button
           type="button"
-          onClick={onWithdraw}
+          onClick={onWithdrawal}
           className="rounded-xl bg-gradient-to-r from-blue-500 to-emerald-400 px-3 py-2.5 text-xs font-bold text-gray-950 shadow-[0_0_18px_rgba(59,130,246,0.3)] transition hover:brightness-110"
         >
-          Withdraw Now
+          Withdraw
         </button>
         <button
           type="button"
@@ -577,10 +623,9 @@ function WithdrawCard({
 
       <div className="mt-4 rounded-lg border border-gray-800 bg-gray-950/50 p-3">
         <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
-          Available Withdrawal Amount
+          Available Balance
         </p>
         <p className="mt-1 font-display text-2xl font-bold text-emerald-400">{money(available)}</p>
-        <p className="mt-1 text-[10px] text-muted-foreground">Main + Extra balance</p>
       </div>
 
       {locked && lockedReason ? (
@@ -777,13 +822,28 @@ function DashboardContent() {
   const [recentWithdrawals, setRecentWithdrawals] = useState<RecentWithdrawal[]>([]);
   const [summary, setSummary] = useState<DashboardSummary>(EMPTY_SUMMARY);
   const [platformStats, setPlatformStats] = useState<PlatformStats>(EMPTY_PLATFORM_STATS);
-  const [withdrawOpen, setWithdrawOpen] = useState(false);
-  const [withdrawSource, setWithdrawSource] = useState<"main" | "extra">("main");
-  const [withdrawAddress, setWithdrawAddress] = useState("");
+  const [withdrawalOpen, setWithdrawalOpen] = useState(false);
+  const [withdrawalBusy, setWithdrawalBusy] = useState(false);
+  const [withdrawalSuccess, setWithdrawalSuccess] = useState(false);
   const [withdrawAmount, setWithdrawAmount] = useState("");
-  const [withdrawBusy, setWithdrawBusy] = useState(false);
-  const [walletOpen, setWalletOpen] = useState(false);
-  const [walletInput, setWalletInput] = useState("");
+  const [selectedWallet, setSelectedWallet] = useState<{
+    type: WalletType;
+    address: string;
+  } | null>(null);
+  const [holdActive, setHoldActive] = useState(false);
+  const [holdProgress, setHoldProgress] = useState(0);
+  const [holdTimer, setHoldTimer] = useState<ReturnType<typeof setInterval> | null>(
+    null,
+  );
+  const [holdStartTime, setHoldStartTime] = useState<number | null>(null);
+
+  const [walletManagementOpen, setWalletManagementOpen] = useState(false);
+  const [savedWallets, setSavedWallets] = useState<{
+    bep20: string;
+    solana: string;
+    trc20: string;
+  }>({ bep20: "", solana: "", trc20: "" });
+  const [defaultWalletType, setDefaultWalletType] = useState<WalletType>("bep20");
   const [walletBusy, setWalletBusy] = useState(false);
   const [passwordOpen, setPasswordOpen] = useState(false);
   const [newPassword, setNewPassword] = useState("");
@@ -924,8 +984,7 @@ function DashboardContent() {
           .eq("user_id", currentUser.id)
           .eq("type", "deposit")
           .eq("status", "completed")
-          .order("created_at", { ascending: false })
-          .limit(1),
+          .order("created_at", { ascending: false }),
         supabase
           .from("transactions")
           .select("id,amount,created_at")
@@ -970,6 +1029,8 @@ function DashboardContent() {
             created_at: string;
           }
         | undefined;
+
+      const totalDeposited = round2(sumDeposits(depositRows.data));
 
       const dailyProfitTotal = round2(
         Math.max(
@@ -1016,6 +1077,7 @@ function DashboardContent() {
         referralBonus: round2(sumAmounts(referralBonuses)),
         dailyProfit: dailyProfitTotal,
         totalWithdrawn: sumAmounts(withdrawals),
+        totalDeposited,
         latestWithdraw: withdrawals[0]
           ? {
               amount: Math.abs(Number(withdrawals[0].amount) || 0),
@@ -1216,6 +1278,10 @@ function DashboardContent() {
   };
 
   const totalBalance = mainBalance + extraBalance;
+  // A user may only withdraw profits: total earnings (Main + Extra) minus the
+  // total amount they have deposited. Never let them withdraw their own
+  // initial capital, and floor at $0.00.
+  const availableWithdrawal = Math.max(0, totalBalance - summary.totalDeposited);
 
   // Total Balance card shows money EARNED only — never deposits. Main is the
   // sum of daily_profit transactions; Extra is ads + referral bonuses.
@@ -1248,7 +1314,6 @@ function DashboardContent() {
   // elapsed AND the Hilltop video ad reported that it played to the end.
   const adTimerDone = adSecondsLeft <= 0;
   const canClaimAd = adTimerDone && videoDone;
-  const sourceBalance = withdrawSource === "main" ? mainBalance : extraBalance;
   const lastWithdrawAt = profile?.last_withdraw_at
     ? new Date(profile.last_withdraw_at).getTime()
     : null;
@@ -1258,140 +1323,180 @@ function DashboardContent() {
   const withdrawCooldownDays = withdrawLocked
     ? Math.max(1, Math.ceil(withdrawCooldownLeftMs / (24 * 60 * 60 * 1000)))
     : 0;
-  const parsedWithdrawAmount = Number(withdrawAmount);
-  const withdrawAmountValid =
-    Number.isFinite(parsedWithdrawAmount) &&
-    parsedWithdrawAmount > 0 &&
-    Math.round(parsedWithdrawAmount * 100) / 100 <= Math.round(sourceBalance * 100) / 100;
   const withdrawBlockedReason = withdrawLocked
     ? `You can withdraw again in ${withdrawCooldownDays} day${withdrawCooldownDays === 1 ? "" : "s"}.`
     : "";
 
-  const openWithdraw = () => {
+  const openWithdrawal = () => {
     setWithdrawAmount("");
-    setWithdrawAddress(profile?.default_wallet_address ?? "");
-    setWithdrawOpen(true);
+    setHoldProgress(0);
+    setHoldTimer(null);
+    setHoldStartTime(null);
+
+    const wallets = profile?.saved_wallets as SavedWallets | undefined;
+    const defaultType =
+      ((profile?.default_wallet_type ?? "bep20") as WalletType) ?? "bep20";
+    const options = walletOptions(wallets);
+    const defaultOption =
+      options.find((o) => o.type === defaultType) ?? options[0] ?? null;
+    setSelectedWallet(defaultOption);
+    setWithdrawalOpen(true);
   };
 
-  const submitWithdraw = async (e: React.FormEvent) => {
+  const submitWithdrawal = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!user || withdrawBusy) return;
-    const address = withdrawAddress.trim();
-    const amount = Math.round(Number(withdrawAmount) * 100) / 100;
+    if (!user || withdrawalBusy) return;
     if (withdrawLocked) {
       toast.error(withdrawBlockedReason || "Withdrawals are limited to once every 7 days.");
       return;
     }
-    if (!address) {
-      toast.error("Enter your crypto wallet address.");
+    if (!selectedWallet?.address.trim()) {
+      toast.error("Please select a wallet address.");
       return;
     }
+    const amount = Math.round(Number(withdrawAmount) * 100) / 100;
     if (!Number.isFinite(amount) || amount <= 0) {
       toast.error("Enter a valid withdrawal amount.");
       return;
     }
-    if (amount > Math.round(sourceBalance * 100) / 100) {
+    // Min $50, max $200, and never more than the available (profit) balance.
+    if (amount < 50) {
+      toast.error("The minimum withdrawal amount is $50.00.");
+      return;
+    }
+    if (amount > 200) {
+      toast.error("The maximum withdrawal amount is $200.00.");
+      return;
+    }
+    if (amount > availableWithdrawal) {
       toast.error("Amount exceeds your available balance.");
       return;
     }
-    setWithdrawBusy(true);
+
+    setWithdrawalBusy(true);
     try {
       const nowIso = new Date().toISOString();
-      const txPayload: Record<string, unknown> = {
+      const address = selectedWallet.address.trim();
+      const { error: txError } = await supabase.from("transactions").insert({
         user_id: user.id,
         type: "withdrawal",
         amount: -amount,
         status: "pending",
         wallet_address: address,
-      };
-      let { error: txError } = await supabase.from("transactions").insert(txPayload);
-      if (txError && (txError.code === "23502" || /null value/i.test(txError.message))) {
-        const retry = await supabase.from("transactions").insert({
-          ...txPayload,
-          deposit_amount: amount,
-          network: "WITHDRAW",
-          plan_name: withdrawSource === "main" ? "Main Balance" : "Extra Balance",
-          tx_hash: `wd-${Date.now()}`,
-        });
-        txError = retry.error;
-      }
+        network: selectedWallet.type.toUpperCase(),
+        plan_name: `Withdraw to ${WALLET_LABELS[selectedWallet.type]}`,
+        tx_hash: `wd-${Date.now()}`,
+        created_at: nowIso,
+      });
       if (txError) throw txError;
 
-      const balancePatch =
-        withdrawSource === "main"
-          ? { main_balance: Math.round((mainBalance - amount) * 100) / 100 }
-          : { extra_balance: Math.round((extraBalance - amount) * 100) / 100 };
       const { error: profileError } = await supabase
         .from("profiles")
-        .update({
-          ...balancePatch,
-          last_withdraw_at: nowIso,
-          default_wallet_address: address,
-        })
+        .update({ last_withdraw_at: nowIso })
         .eq("id", user.id);
-      if (profileError) {
-        const msg = /column .*last_withdraw_at/i.test(profileError.message)
-          ? "Please run the withdrawal migration first (last_withdraw_at column missing)."
-          : /column .*default_wallet_address/i.test(profileError.message)
-            ? "Please run the dashboard profile migration first (default_wallet_address missing)."
-            : profileError.message;
-        throw new Error(msg);
-      }
+      if (profileError) throw profileError;
 
       setProfile((current) =>
-        current
-          ? {
-              ...current,
-              ...balancePatch,
-              last_withdraw_at: nowIso,
-              default_wallet_address: address,
-            }
-          : current,
+        current ? { ...current, last_withdraw_at: nowIso } : current,
       );
-      setWithdrawOpen(false);
-      setWithdrawAddress("");
+      setWithdrawalOpen(false);
       setWithdrawAmount("");
+      setSelectedWallet(null);
+      setHoldProgress(0);
+      setHoldTimer(null);
+      setHoldStartTime(null);
+      setWithdrawalSuccess(true);
       toast.success("Withdrawal request submitted for manual review.");
     } catch (err) {
       const message = err instanceof Error ? err.message : "Couldn't submit withdrawal.";
       toast.error(message);
     } finally {
-      setWithdrawBusy(false);
+      setWithdrawalBusy(false);
     }
   };
 
-  const openWallet = () => {
-    setWalletInput(profile?.default_wallet_address ?? "");
-    setWalletOpen(true);
+  /** True when the typed amount passes all client-side withdrawal rules. */
+  const parsedWithdrawAmount = Number(withdrawAmount);
+  const isWithdrawAmountValid =
+    Number.isFinite(parsedWithdrawAmount) &&
+    parsedWithdrawAmount >= 50 &&
+    parsedWithdrawAmount <= 200 &&
+    parsedWithdrawAmount <= availableWithdrawal;
+
+  const startHold = (e: React.MouseEvent) => {
+    e.preventDefault();
+    if (
+      withdrawalBusy ||
+      holdActive ||
+      withdrawLocked ||
+      !selectedWallet?.address.trim() ||
+      !isWithdrawAmountValid
+    )
+      return;
+    setHoldActive(true);
+    setHoldProgress(0);
+    setHoldStartTime(Date.now());
+    setHoldTimer(
+      setInterval(() => {
+        const elapsed = (Date.now() - (holdStartTime ?? 0)) / HOLD_SECONDS_MS;
+        setHoldProgress(Math.min(elapsed, 1));
+        if (elapsed >= 1) {
+          cancelHold();
+          void submitWithdrawal({
+            preventDefault: () => {},
+          } as unknown as React.FormEvent);
+        }
+      }, HOLD_TICK_MS),
+    );
   };
 
-  const saveWallet = async (e: React.FormEvent) => {
+  const cancelHold = () => {
+    setHoldActive(false);
+    setHoldProgress(0);
+    setHoldStartTime(null);
+    if (holdTimer) clearInterval(holdTimer);
+    setHoldTimer(null);
+  };
+
+  // Auto-dismiss the success notification bar after 3 seconds.
+  useEffect(() => {
+    if (!withdrawalSuccess) return;
+    const t = setTimeout(() => setWithdrawalSuccess(false), 3000);
+    return () => clearTimeout(t);
+  }, [withdrawalSuccess]);
+
+  const openWalletManagement = () => {
+    const wallets = profile?.saved_wallets as SavedWallets | undefined;
+    setSavedWallets({
+      bep20: String(wallets?.bep20 ?? ""),
+      solana: String(wallets?.solana ?? ""),
+      trc20: String(wallets?.trc20 ?? ""),
+    });
+    setDefaultWalletType(
+      ((profile?.default_wallet_type ?? "bep20") as WalletType) ?? "bep20",
+    );
+    setWalletManagementOpen(true);
+  };
+
+  const saveWallets = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user || walletBusy) return;
-    const address = walletInput.trim();
-    if (!address) {
-      toast.error("Enter your wallet address.");
-      return;
-    }
     setWalletBusy(true);
     try {
       const { error } = await supabase
         .from("profiles")
-        .update({ default_wallet_address: address })
+        .update({ saved_wallets, default_wallet_type: defaultWalletType })
         .eq("id", user.id);
-      if (error) {
-        const message = /column .*default_wallet_address/i.test(error.message)
-          ? "Please run the dashboard profile migration first (default_wallet_address missing)."
-          : error.message;
-        throw new Error(message);
-      }
+      if (error) throw error;
       setProfile((current) =>
-        current ? { ...current, default_wallet_address: address } : current,
+        current
+          ? { ...current, saved_wallets, default_wallet_type }
+          : current,
       );
-      setWalletOpen(false);
-      toast.success("Default wallet saved.");
+      toast.success("Wallet addresses saved.");
+      setWalletManagementOpen(false);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Couldn't save your wallet.");
+      toast.error(err instanceof Error ? err.message : "Couldn't save your wallets.");
     } finally {
       setWalletBusy(false);
     }
@@ -1703,12 +1808,12 @@ function DashboardContent() {
                 onCopyLink={copyReferralLink}
               />
               <WithdrawCard
-                available={totalBalance}
+                available={availableWithdrawal}
                 withdrawals={recentWithdrawals}
                 locked={withdrawLocked}
                 lockedReason={withdrawBlockedReason}
-                onWithdraw={openWithdraw}
-                onSetWallet={openWallet}
+                onWithdrawal={openWithdrawal}
+                onSetWallet={openWalletManagement}
               />
               <UserControlCard
                 email={email}
@@ -1944,69 +2049,122 @@ function DashboardContent() {
         </div>
       )}
 
-      {walletOpen && (
+      {walletManagementOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
           <div
             role="dialog"
             aria-modal="true"
-            aria-labelledby="wallet-title"
+            aria-labelledby="wallet-management-title"
             className="w-full max-w-md rounded-2xl border bg-card p-6 shadow-glow"
           >
             <div className="flex items-start justify-between gap-3">
               <div>
                 <p className="text-xs font-semibold uppercase tracking-[0.25em] text-primary">
-                  Withdraw
+                  Wallet Management
                 </p>
-                <h2 id="wallet-title" className="mt-1 font-display text-xl font-bold">
-                  Set Wallet
+                <h2 id="wallet-management-title" className="mt-1 font-display text-xl font-bold">
+                  Saved Wallets
                 </h2>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  Save the address used to prefill withdrawal requests.
+                  Save your addresses and pick the default withdrawal wallet.
                 </p>
               </div>
               <button
                 type="button"
-                onClick={() => !walletBusy && setWalletOpen(false)}
+                onClick={() => !walletBusy && setWalletManagementOpen(false)}
                 disabled={walletBusy}
-                aria-label="Close wallet"
+                aria-label="Close wallet management"
                 className="rounded-lg border border-border px-3 py-1.5 text-sm font-semibold text-muted-foreground hover:text-foreground disabled:opacity-50"
               >
                 ✕
               </button>
             </div>
 
-            <form onSubmit={saveWallet} className="mt-4 space-y-4">
-              <div className="space-y-1.5">
-                <label htmlFor="default-wallet" className="text-sm font-medium">
-                  Default Wallet Address
-                </label>
-                <input
-                  id="default-wallet"
-                  value={walletInput}
-                  onChange={(e) => setWalletInput(e.target.value)}
-                  placeholder="0x..."
-                  className="w-full rounded-lg border bg-muted px-4 py-3 text-sm outline-none focus:border-primary"
-                />
+            <form onSubmit={saveWallets} className="mt-4 space-y-6">
+              <div className="space-y-4">
+                {WALLET_TYPES.map((type) => {
+                  const isDefault = defaultWalletType === type;
+                  const address = savedWallets[type];
+                  return (
+                    <div key={type} className="flex items-center gap-3 border-b border-border pb-2 last:border-0">
+                      <div className="flex-1 space-y-1">
+                        <label className="text-sm font-medium text-muted-foreground">
+                          {WALLET_LABELS[type]} Address
+                        </label>
+                        <input
+                          id={`wallet-${type}`}
+                          value={address}
+                          onChange={(e) =>
+                            setSavedWallets({
+                              ...savedWallets,
+                              [type]: e.target.value,
+                            })
+                          }
+                          placeholder={
+                            type === "bep20"
+                              ? "0x..."
+                              : type === "solana"
+                                ? "Solana address..."
+                                : "TRC20 address..."
+                          }
+                          className="w-full rounded-lg border bg-muted px-4 py-3 text-sm outline-none focus:border-primary"
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        role="radio"
+                        aria-checked={isDefault}
+                        onClick={() => setDefaultWalletType(type)}
+                        className={`h-6 w-6 rounded-full border-2 shrink-0 transition-colors ${
+                          isDefault
+                            ? "border-brand bg-brand"
+                            : "border-muted-foreground hover:border-primary"
+                        }`}
+                      >
+                        {isDefault && (
+                          <span className="flex h-3 w-3 items-center justify-center">
+                            <svg
+                              className="h-2.5 w-2.5 fill-primary-foreground"
+                              viewBox="0 0 20 20"
+                              fill="currentColor"
+                            >
+                              <path
+                                fillRule="evenodd"
+                                d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l1.414 1.414a1 1 0 001.414 0l1.414-1.414a1 1 0 000-1.414z"
+                                clipRule="evenodd"
+                              />
+                            </svg>
+                          </span>
+                        )}
+                      </button>
+                    </div>
+                  );
+                })}
               </div>
+
+              <p className="text-xs text-muted-foreground">
+                Select the default wallet by choosing its radio button. It will be
+                pre-selected when you request a withdrawal.
+              </p>
 
               <button
                 type="submit"
-                disabled={walletBusy || !walletInput.trim()}
+                disabled={walletBusy}
                 className="w-full rounded-lg bg-brand py-3 font-display font-bold text-primary-foreground shadow-glow disabled:cursor-not-allowed disabled:opacity-60"
               >
-                {walletBusy ? "Saving…" : "Save Wallet"}
+                {walletBusy ? "Saving…" : "Save Wallets"}
               </button>
             </form>
           </div>
         </div>
       )}
 
-      {withdrawOpen && (
+      {withdrawalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
           <div
             role="dialog"
             aria-modal="true"
-            aria-labelledby="withdraw-title"
+            aria-labelledby="withdrawal-title"
             className="w-full max-w-md rounded-2xl border bg-card p-6 shadow-glow"
           >
             <div className="flex items-start justify-between gap-3">
@@ -2014,18 +2172,17 @@ function DashboardContent() {
                 <p className="text-xs font-semibold uppercase tracking-[0.25em] text-primary">
                   Withdraw
                 </p>
-                <h2 id="withdraw-title" className="mt-1 font-display text-xl font-bold">
+                <h2 id="withdrawal-title" className="mt-1 font-display text-xl font-bold">
                   Request Withdrawal
                 </h2>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  Main {money(mainBalance)} · Extra {money(extraBalance)} · Total{" "}
-                  {money(totalBalance)}
+                  Available balance: {money(availableWithdrawal)}
                 </p>
               </div>
               <button
                 type="button"
-                onClick={() => !withdrawBusy && setWithdrawOpen(false)}
-                disabled={withdrawBusy}
+                onClick={() => setWithdrawalOpen(false)}
+                disabled={withdrawalBusy || holdActive}
                 aria-label="Close withdrawal"
                 className="rounded-lg border border-border px-3 py-1.5 text-sm font-semibold text-muted-foreground hover:text-foreground disabled:opacity-50"
               >
@@ -2033,45 +2190,53 @@ function DashboardContent() {
               </button>
             </div>
 
-            <form onSubmit={submitWithdraw} className="mt-4 space-y-4">
-              <div className="grid grid-cols-2 gap-2 rounded-xl bg-muted p-1" role="tablist">
-                {(["main", "extra"] as const).map((key) => (
-                  <button
-                    key={key}
-                    type="button"
-                    role="tab"
-                    aria-selected={withdrawSource === key}
-                    onClick={() => setWithdrawSource(key)}
-                    className={`rounded-lg px-3 py-2 text-sm font-semibold transition ${withdrawSource === key ? "bg-brand text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}
-                  >
-                    {key === "main"
-                      ? `Main (${money(mainBalance)})`
-                      : `Extra (${money(extraBalance)})`}
-                  </button>
-                ))}
+            <form onSubmit={submitWithdrawal} className="mt-4 space-y-5">
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium">Withdraw to</label>
+                <div className="flex items-center gap-2">
+                  {selectedWallet ? (
+                    <span className="text-sm text-muted-foreground">
+                      {maskWallet(selectedWallet.address)} (
+                      {WALLET_LABELS[selectedWallet.type]})
+                    </span>
+                  ) : (
+                    <span className="text-sm text-amber-500">No saved wallets</span>
+                  )}
+                  {walletOptions(profile?.saved_wallets as SavedWallets | undefined).length > 1 && (
+                    <select
+                      value={selectedWallet?.type ?? ""}
+                      onChange={(e) => {
+                        const type = e.target.value as WalletType;
+                        const addr =
+                          (profile?.saved_wallets as SavedWallets | undefined)?.[
+                            type
+                          ] ?? "";
+                        setSelectedWallet({ type, address: addr });
+                      }}
+                      className="rounded-lg border bg-muted px-4 py-3 text-sm outline-none focus:border-primary"
+                      disabled={withdrawalBusy || holdActive}
+                    >
+                      {walletOptions(
+                        profile?.saved_wallets as SavedWallets | undefined,
+                      ).map((o) => (
+                        <option key={o.type} value={o.type}>
+                          {WALLET_LABELS[o.type]}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                </div>
               </div>
 
               <div className="space-y-1.5">
-                <label htmlFor="withdraw-address" className="text-sm font-medium">
-                  Crypto Wallet Address
-                </label>
-                <input
-                  id="withdraw-address"
-                  value={withdrawAddress}
-                  onChange={(e) => setWithdrawAddress(e.target.value)}
-                  placeholder="Paste your wallet address"
-                  className="w-full rounded-lg border bg-muted px-4 py-3 text-sm outline-none focus:border-primary"
-                />
-              </div>
-
-              <div className="space-y-1.5">
-                <label htmlFor="withdraw-amount" className="text-sm font-medium">
+                <label htmlFor="withdrawal-amount" className="text-sm font-medium">
                   Withdrawal Amount (USD)
                 </label>
                 <input
-                  id="withdraw-amount"
+                  id="withdrawal-amount"
                   type="number"
-                  min="0"
+                  min="50"
+                  max="200"
                   step="0.01"
                   value={withdrawAmount}
                   onChange={(e) => setWithdrawAmount(e.target.value)}
@@ -2079,7 +2244,8 @@ function DashboardContent() {
                   className="w-full rounded-lg border bg-muted px-4 py-3 text-sm outline-none focus:border-primary"
                 />
                 <p className="text-xs text-muted-foreground">
-                  Available from {withdrawSource}: {money(sourceBalance)}
+                  Min $50.00 · Max $200.00 · Available{" "}
+                  {money(availableWithdrawal)}
                 </p>
               </div>
 
@@ -2089,20 +2255,70 @@ function DashboardContent() {
                 </p>
               )}
 
-              <button
-                type="submit"
-                disabled={
-                  withdrawBusy || withdrawLocked || !withdrawAmountValid || !withdrawAddress.trim()
-                }
-                className="w-full rounded-lg bg-brand py-3 font-display font-bold text-primary-foreground shadow-glow disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {withdrawBusy ? "Submitting…" : "Submit Withdrawal"}
-              </button>
+              <div className="space-y-2">
+                <button
+                  type="button"
+                  onMouseDown={startHold}
+                  onMouseUp={cancelHold}
+                  onMouseLeave={cancelHold}
+                  onDragEnd={cancelHold}
+                  disabled={
+                    withdrawalBusy ||
+                    !selectedWallet?.address.trim() ||
+                    !isWithdrawAmountValid ||
+                    withdrawLocked
+                  }
+                  className={`w-full rounded-lg py-3 font-display font-bold text-primary-foreground shadow-glow transition-all duration-200 ${
+                    holdActive ? "bg-emerald-500" : "bg-brand"
+                  } disabled:cursor-not-allowed disabled:opacity-60`}
+                >
+                  {holdActive ? "Hold to confirm…" : "Submit Withdrawal"}
+                </button>
+                <div className="h-1.5 w-full rounded-full bg-muted/40 overflow-hidden">
+                  <div
+                    className="h-full bg-brand transition-all duration-100"
+                    style={{ width: `${holdProgress * 100}%` }}
+                  />
+                </div>
+                <p className="text-center text-xs text-muted-foreground">
+                  Hold for 3 seconds to confirm. Release to cancel.
+                </p>
+              </div>
               <p className="text-center text-xs text-muted-foreground">
                 One withdrawal every 7 days. Requests need manual review.
               </p>
             </form>
           </div>
+        </div>
+      )}
+
+      {withdrawalSuccess && (
+        <div
+          role="status"
+          aria-live="polite"
+          data-testid="withdrawal-success-bar"
+          className="fixed bottom-4 left-1/2 z-50 -translate-x-1/2 flex w-[calc(100%_-_2rem)] max-w-md items-center gap-3 rounded-2xl border border-emerald-400/30 bg-slate-950/80 px-4 py-3 shadow-2xl backdrop-blur-xl shadow-[0_0_45px_-10px_rgba(16,185,129,0.9)] ring-1 ring-emerald-400/10"
+        >
+          <span
+            aria-hidden="true"
+            className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-emerald-500/15 text-emerald-300"
+          >
+            <svg
+              viewBox="0 0 20 20"
+              fill="none"
+              aria-hidden="true"
+              className="h-5 w-5"
+              stroke="currentColor"
+              strokeWidth={2.4}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M4 10.5l4 4 8-9" />
+            </svg>
+          </span>
+          <p className="min-w-0 flex-1 font-medium leading-snug text-emerald-50">
+            Withdrawal request submitted successfully! Pending admin approval.
+          </p>
         </div>
       )}
 

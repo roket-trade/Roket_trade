@@ -235,11 +235,11 @@ describe("Dashboard top summary cards", () => {
     expect(screen.getByRole("button", { name: "Copy" })).toBeInTheDocument();
 
     expect(screen.getByRole("heading", { name: "Withdraw" })).toBeInTheDocument();
-    expect(screen.getByText("Available Withdrawal Amount")).toBeInTheDocument();
+    expect(screen.getByText("Available Balance")).toBeInTheDocument();
     expect(screen.getByText("Latest 5 Withdrawals")).toBeInTheDocument();
     expect(screen.getByText("-$50.00")).toBeInTheDocument();
     expect(screen.getByText("One withdrawal every 7 days.")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Withdraw Now" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Withdraw" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Set Wallet" })).toBeInTheDocument();
 
     expect(screen.getByRole("heading", { name: "User Control" })).toBeInTheDocument();

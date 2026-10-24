@@ -55,6 +55,7 @@ export type Database = {
           address: string | null
           created_at: string
           default_wallet_address: string | null
+          default_wallet_type: string | null
           extra_balance: number | null
           full_name: string
           id: string
@@ -69,11 +70,13 @@ export type Database = {
           plan_started_at: string | null
           referral_code: string
           referred_by: string | null
+          saved_wallets: Json | null
         }
         Insert: {
           address?: string | null
           created_at?: string
           default_wallet_address?: string | null
+          default_wallet_type?: string | null
           extra_balance?: number | null
           full_name: string
           id: string
@@ -88,11 +91,13 @@ export type Database = {
           plan_started_at?: string | null
           referral_code?: string
           referred_by?: string | null
+          saved_wallets?: Json | null
         }
         Update: {
           address?: string | null
           created_at?: string
           default_wallet_address?: string | null
+          default_wallet_type?: string | null
           extra_balance?: number | null
           full_name?: string
           id?: string
@@ -107,6 +112,7 @@ export type Database = {
           plan_started_at?: string | null
           referral_code?: string
           referred_by?: string | null
+          saved_wallets?: Json | null
         }
         Relationships: []
       }
