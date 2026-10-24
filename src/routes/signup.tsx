@@ -6,12 +6,12 @@ import { supabase } from "@/integrations/supabase/client";
 import { readReferralCode } from "@/lib/referral";
 
 export const Route = createFileRoute("/signup")({
-  // NOTE: this route never uses the parsed search for the referral code.
-  // TanStack Router JSON-parses query values, so ?ref=80758E76 becomes the
-  // number 8.0758e+80 (and its searchStr is re-serialized from that number).
-  // The component reads window.location.search directly instead.
+  // Search values stay plain strings now (see the custom parseSearch in
+  // src/router.tsx), so ?ref=80758E76 is never JSON-parsed into a number. The
+  // component additionally reads the raw URL on mount as a belt-and-braces
+  // guard for direct page loads.
   validateSearch: (s: Record<string, unknown>): { ref?: string } => {
-    const ref = typeof s.ref === "string" ? s.ref.trim() : "";
+    const ref = typeof s["ref"] === "string" ? s["ref"].trim() : "";
     return ref ? { ref } : {};
   },
   head: () => ({
