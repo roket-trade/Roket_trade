@@ -1,1 +1,7 @@
 project_id = "pnzspoelivyihngacssv"
+
+# The 30-second pg_cron poller authenticates with a shared secret
+# (VERIFY_DEPOSIT_SECRET), not a user JWT, so the gateway must not require one.
+# The function still rejects unauthorized callers itself.
+[functions.verify-crypto-deposit]
+verify_jwt = false

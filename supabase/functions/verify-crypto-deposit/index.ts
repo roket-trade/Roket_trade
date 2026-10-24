@@ -1,0 +1,535 @@
+// Supabase Edge Function — verify-crypto-deposit
+//
+// Verifies a crypto deposit against free public RPCs (no paid indexer):
+//   - BEP20: BNB Smart Chain `eth_getTransactionReceipt` + BEP20 Transfer logs
+//   - SOL:   Solana `getTransaction` (SPL token balance delta, or native SOL)
+//
+// On success it marks the deposit `completed` and activates the user's plan.
+// On a definitive on-chain mismatch it marks the deposit `rejected`.
+// If the transaction is not mined/confirmed yet it leaves the deposit `pending`
+// so the 30-second pg_cron poller retries it.
+//
+// Deploy:
+//   supabase functions deploy verify-crypto-deposit --no-verify-jwt
+//
+// Required secrets (supabase secrets set ...):
+//   PLATFORM_WALLET_BEP20   e.g. 0x35aec7E35F65ea227e49fDd321709D52Ada389E4
+//   PLATFORM_WALLET_SOL     e.g. 3mjR2gV3MJrudjus9yBuh3EtSMw6Ca5BVFcYiMDa1VjQ
+//   VERIFY_DEPOSIT_SECRET   shared secret also stored in Supabase Vault for cron
+// Optional secrets:
+//   BSC_RPC_URL (default https://bsc-dataseed.binance.org/)
+//   SOLANA_RPC_URL (default https://api.mainnet-beta.solana.com)
+//   BEP20_TOKEN_CONTRACT / BEP20_TOKEN_DECIMALS / BEP20_TOKEN_SYMBOL
+//   SOL_TOKEN_MINT / SOL_TOKEN_DECIMALS ("native" verifies plain SOL)
+//   SOL_USD_PRICE (only needed when SOL_TOKEN_MINT=native)
+//
+// SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are injected by the platform.
+
+// deno-lint-ignore-file no-explicit-any
+import { createClient } from "npm:@supabase/supabase-js@2";
+
+const BSC_RPC_URL = Deno.env.get("BSC_RPC_URL") ?? "https://bsc-dataseed.binance.org/";
+const SOLANA_RPC_URL = Deno.env.get("SOLANA_RPC_URL") ?? "https://api.mainnet-beta.solana.com";
+
+// USDT on BNB Smart Chain (18 decimals) and USDT on Solana (6 decimals).
+const BEP20_TOKEN_CONTRACT =
+  Deno.env.get("BEP20_TOKEN_CONTRACT") ?? "0x55d398326f99059fF775485246999027B3197955";
+const BEP20_TOKEN_DECIMALS = Number(Deno.env.get("BEP20_TOKEN_DECIMALS") ?? "18");
+const BEP20_TOKEN_SYMBOL = Deno.env.get("BEP20_TOKEN_SYMBOL") ?? "USDT";
+
+const SOL_TOKEN_MINT =
+  Deno.env.get("SOL_TOKEN_MINT") ?? "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB";
+const SOL_TOKEN_DECIMALS = Number(Deno.env.get("SOL_TOKEN_DECIMALS") ?? "6");
+const SOL_TOKEN_SYMBOL = Deno.env.get("SOL_TOKEN_SYMBOL") ?? "USDT";
+
+const PLAN_AMOUNTS: Record<string, number> = { "1": 60, "2": 120, "3": 180, "4": 250 };
+const PLAN_DAYS = 365;
+const TRANSFER_TOPIC = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
+
+type Network = "BEP20" | "SOL";
+
+type VerifyRequest = {
+  tx_hash?: string;
+  network?: string;
+  plan_id?: string | number | null;
+  user_id?: string | null;
+  transaction_id?: string | null;
+  force?: boolean;
+};
+
+type TransactionRow = {
+  id: string;
+  user_id: string | null;
+  type: string;
+  status: string;
+  amount: number | string;
+  deposit_amount: number | string | null;
+  plan_name: string | null;
+  network: string | null;
+  tx_hash: string | null;
+};
+
+type VerifyOutcome =
+  | { status: "completed"; received: string; expected: string }
+  | { status: "rejected"; reason: string }
+  | { status: "pending"; reason: string };
+
+type EvmLog = { address?: string; topics?: string[]; data?: string };
+type EvmReceipt = { status?: string; logs?: EvmLog[] };
+
+type SolInstruction = {
+  program?: string;
+  parsed?: { type?: string; info?: Record<string, unknown> };
+};
+type SolTokenBalance = {
+  accountIndex: number;
+  mint?: string;
+  owner?: string;
+  uiTokenAmount?: { amount?: string; decimals?: number };
+};
+type SolTransaction = {
+  meta?: {
+    err?: unknown;
+    preTokenBalances?: SolTokenBalance[];
+    postTokenBalances?: SolTokenBalance[];
+  } | null;
+  transaction?: { message?: { instructions?: SolInstruction[] } };
+};
+
+function json(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
+}
+
+/** Constant-time-ish compare so the shared secret is not leaked by timing. */
+function safeEqual(a: string, b: string): boolean {
+  if (!a || !b || a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i += 1) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
+
+function isAuthorized(request: Request): boolean {
+  const secret =
+    Deno.env.get("VERIFY_DEPOSIT_SECRET") ?? Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+  if (!secret) return false;
+  const bearer = (request.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "").trim();
+  const cronSecret = (request.headers.get("x-cron-secret") ?? "").trim();
+  return safeEqual(bearer, secret) || safeEqual(cronSecret, secret);
+}
+
+function normalizeNetwork(value: string | null | undefined): Network | null {
+  const raw = (value ?? "").trim().toUpperCase();
+  if (raw === "BEP20" || raw === "BSC" || raw === "BNB" || raw === "ERC20") return "BEP20";
+  if (raw === "SOL" || raw === "SOLANA") return "SOL";
+  return null;
+}
+
+function normalizePlanName(value: string | null, planId?: string | number | null): string {
+  const match = /plan\s*([1-4])/i.exec(value ?? "");
+  if (match?.[1]) return `Plan ${match[1]}`;
+  const digits = String(planId ?? "").replace(/\D/g, "");
+  if (PLAN_AMOUNTS[digits]) return `Plan ${digits}`;
+  return value?.trim() || "Plan";
+}
+
+/** Converts a USD/stablecoin amount to integer base units without float drift. */
+function toBaseUnits(amount: number, decimals: number): bigint {
+  const fixed = amount.toFixed(decimals);
+  const [whole = "0", fraction = ""] = fixed.split(".");
+  const padded = (fraction + "0".repeat(decimals)).slice(0, decimals);
+  return BigInt(whole) * 10n ** BigInt(decimals) + BigInt(padded === "" ? "0" : padded);
+}
+
+function formatUnits(value: bigint, decimals: number): string {
+  const base = 10n ** BigInt(decimals);
+  const whole = value / base;
+  const fraction = (value % base).toString().padStart(decimals, "0").replace(/0+$/, "");
+  return fraction ? `${whole}.${fraction}` : whole.toString();
+}
+
+async function rpc<T>(url: string, method: string, params: unknown[]): Promise<T> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 10_000);
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      throw new Error(`RPC ${method} failed with HTTP ${response.status}`);
+    }
+    const payload = (await response.json()) as {
+      result?: T;
+      error?: { message?: string };
+    };
+    if (payload.error) {
+      throw new Error(payload.error.message ?? `RPC ${method} failed`);
+    }
+    return payload.result as T;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function platformWallet(network: Network): string {
+  const value =
+    network === "BEP20"
+      ? (Deno.env.get("PLATFORM_WALLET_BEP20") ?? Deno.env.get("PLATFORM_WALLET_ADDRESS"))
+      : (Deno.env.get("PLATFORM_WALLET_SOL") ?? Deno.env.get("PLATFORM_WALLET_ADDRESS"));
+  if (!value) {
+    throw new Error(
+      network === "BEP20"
+        ? "PLATFORM_WALLET_BEP20 secret is not configured"
+        : "PLATFORM_WALLET_SOL secret is not configured",
+    );
+  }
+  return value.trim();
+}
+
+async function verifyBep20(txHash: string, expectedUsd: number): Promise<VerifyOutcome> {
+  const platform = platformWallet("BEP20");
+  const receipt = await rpc<EvmReceipt | null>(BSC_RPC_URL, "eth_getTransactionReceipt", [txHash]);
+
+  // Not mined yet — the cron poller calls us again on the next tick.
+  if (!receipt) return { status: "pending", reason: "Transaction is not mined yet" };
+  if (receipt.status && receipt.status !== "0x1") {
+    return { status: "rejected", reason: "Transaction reverted on-chain" };
+  }
+
+  const decimals = Number.isInteger(BEP20_TOKEN_DECIMALS) ? BEP20_TOKEN_DECIMALS : 18;
+  const platformTopic = `0x${platform.replace(/^0x/, "").toLowerCase().padStart(64, "0")}`;
+  const tokenAddress = BEP20_TOKEN_CONTRACT.toLowerCase();
+
+  let received = 0n;
+  for (const log of receipt.logs ?? []) {
+    if ((log.address ?? "").toLowerCase() !== tokenAddress) continue;
+    const topics = log.topics ?? [];
+    if ((topics[0] ?? "").toLowerCase() !== TRANSFER_TOPIC) continue;
+    if ((topics[2] ?? "").toLowerCase() !== platformTopic) continue;
+    const raw = log.data && log.data !== "0x" ? log.data : "0";
+    received += BigInt(raw);
+  }
+
+  if (received === 0n) {
+    return {
+      status: "rejected",
+      reason: `No ${BEP20_TOKEN_SYMBOL} transfer to the platform wallet was found in this transaction`,
+    };
+  }
+
+  const expected = toBaseUnits(expectedUsd, decimals);
+  if (received < expected) {
+    return {
+      status: "rejected",
+      reason: `Underpaid: received ${formatUnits(received, decimals)} ${BEP20_TOKEN_SYMBOL}, expected ${expectedUsd}`,
+    };
+  }
+
+  return {
+    status: "completed",
+    received: `${formatUnits(received, decimals)} ${BEP20_TOKEN_SYMBOL}`,
+    expected: `${expectedUsd} ${BEP20_TOKEN_SYMBOL}`,
+  };
+}
+
+async function verifySolana(txHash: string, expectedUsd: number): Promise<VerifyOutcome> {
+  const platform = platformWallet("SOL");
+  const tx = await rpc<SolTransaction | null>(SOLANA_RPC_URL, "getTransaction", [
+    txHash,
+    {
+      encoding: "jsonParsed",
+      commitment: "confirmed",
+      maxSupportedTransactionVersion: 0,
+    },
+  ]);
+
+  if (!tx) return { status: "pending", reason: "Transaction is not confirmed yet" };
+  if (tx.meta?.err) return { status: "rejected", reason: "Transaction failed on-chain" };
+
+  // Native SOL mode (opt-in): compare lamports received using SOL_USD_PRICE.
+  if (SOL_TOKEN_MINT.toLowerCase() === "native") {
+    const price = Number(Deno.env.get("SOL_USD_PRICE") ?? "0");
+    if (!Number.isFinite(price) || price <= 0) {
+      throw new Error("SOL_USD_PRICE must be configured for native SOL deposits");
+    }
+    let lamports = 0;
+    for (const instruction of tx.transaction?.message?.instructions ?? []) {
+      if (instruction.program !== "system" || instruction.parsed?.type !== "transfer") continue;
+      const info = instruction.parsed?.info ?? {};
+      if (String(info["destination"] ?? "") !== platform) continue;
+      lamports += Number(info["lamports"] ?? 0);
+    }
+    const expectedLamports = Math.round((expectedUsd / price) * 1_000_000_000);
+    if (lamports === 0) {
+      return { status: "rejected", reason: "No SOL transfer to the platform wallet was found" };
+    }
+    if (lamports < expectedLamports) {
+      return {
+        status: "rejected",
+        reason: `Underpaid: received ${(lamports / 1e9).toFixed(6)} SOL, expected ${(expectedLamports / 1e9).toFixed(6)} SOL`,
+      };
+    }
+    return {
+      status: "completed",
+      received: `${(lamports / 1e9).toFixed(6)} SOL`,
+      expected: `${(expectedLamports / 1e9).toFixed(6)} SOL`,
+    };
+  }
+
+  // SPL stablecoin mode (default): use the token-balance delta of the platform
+  // wallet's associated token account. This is robust to ATA creation and to
+  // transfers routed through programs other than the token program.
+  const decimals = Number.isInteger(SOL_TOKEN_DECIMALS) ? SOL_TOKEN_DECIMALS : 6;
+  const before = new Map<number, bigint>();
+  for (const balance of tx.meta?.preTokenBalances ?? []) {
+    before.set(balance.accountIndex, BigInt(balance.uiTokenAmount?.amount ?? "0"));
+  }
+
+  let received = 0n;
+  for (const balance of tx.meta?.postTokenBalances ?? []) {
+    if (balance.mint !== SOL_TOKEN_MINT || balance.owner !== platform) continue;
+    const previous = before.get(balance.accountIndex) ?? 0n;
+    const current = BigInt(balance.uiTokenAmount?.amount ?? "0");
+    if (current > previous) received += current - previous;
+  }
+
+  if (received === 0n) {
+    return {
+      status: "rejected",
+      reason: `No ${SOL_TOKEN_SYMBOL} transfer to the platform wallet was found in this transaction`,
+    };
+  }
+
+  const expected = toBaseUnits(expectedUsd, decimals);
+  if (received < expected) {
+    return {
+      status: "rejected",
+      reason: `Underpaid: received ${formatUnits(received, decimals)} ${SOL_TOKEN_SYMBOL}, expected ${expectedUsd}`,
+    };
+  }
+
+  return {
+    status: "completed",
+    received: `${formatUnits(received, decimals)} ${SOL_TOKEN_SYMBOL}`,
+    expected: `${expectedUsd} ${SOL_TOKEN_SYMBOL}`,
+  };
+}
+
+async function handle(request: Request): Promise<Response> {
+  if (request.method !== "POST") {
+    return json({ ok: false, error: "Method not allowed" }, 405);
+  }
+
+  const secretAvailable =
+    Boolean(Deno.env.get("VERIFY_DEPOSIT_SECRET")) ||
+    Boolean(Deno.env.get("SUPABASE_SERVICE_ROLE_KEY"));
+  if (!secretAvailable) {
+    return json({ ok: false, error: "Server is missing VERIFY_DEPOSIT_SECRET" }, 500);
+  }
+  if (!isAuthorized(request)) {
+    return json({ ok: false, error: "Unauthorized" }, 401);
+  }
+
+  let body: VerifyRequest;
+  try {
+    body = (await request.json()) as VerifyRequest;
+  } catch {
+    return json({ ok: false, error: "Invalid JSON body" }, 400);
+  }
+
+  const txHash = String(body.tx_hash ?? "").trim();
+  if (!txHash) return json({ ok: false, error: "tx_hash is required" }, 400);
+
+  const supabaseUrl = Deno.env.get("SUPABASE_URL");
+  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  if (!supabaseUrl || !serviceKey) {
+    return json({ ok: false, error: "Supabase credentials are not configured" }, 500);
+  }
+
+  const admin = createClient(supabaseUrl, serviceKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+
+  // The transaction row is the source of truth for amount, network and user.
+  // Request fields are only fallbacks, so a caller cannot claim a smaller plan
+  // while sending a smaller amount.
+  const { data: rowData, error: rowError } = await admin
+    .from("transactions")
+    .select(
+      "id,user_id,type,status,amount,deposit_amount,plan_name,network,tx_hash,verification_attempts",
+    )
+    .eq("tx_hash", txHash)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (rowError) {
+    console.error("[verify-crypto-deposit] transaction lookup failed", rowError);
+    return json({ ok: false, error: "Failed to load transaction" }, 500);
+  }
+
+  const row = rowData as TransactionRow | null;
+  if (!row) {
+    return json(
+      { ok: false, status: "not_found", error: "No transaction found for this hash" },
+      404,
+    );
+  }
+  if (row.type !== "deposit") {
+    return json({ ok: false, error: "Transaction is not a deposit" }, 400);
+  }
+  if (row.status === "completed") {
+    return json({ ok: true, status: "already_completed", tx_hash: txHash });
+  }
+  if (row.status === "rejected" && !body.force) {
+    return json({
+      ok: true,
+      status: "rejected",
+      tx_hash: txHash,
+      reason: "Transaction was already rejected",
+    });
+  }
+
+  const network = normalizeNetwork(row.network) ?? normalizeNetwork(body.network);
+  if (!network) {
+    const reason = `Unsupported network: ${row.network ?? body.network ?? "unknown"}`;
+    await admin
+      .from("transactions")
+      .update({ status: "rejected", rejection_reason: reason })
+      .eq("id", row.id)
+      .eq("status", "pending");
+    return json({ ok: false, status: "rejected", reason }, 200);
+  }
+
+  const expectedUsd = Number(row.deposit_amount ?? row.amount);
+  if (!Number.isFinite(expectedUsd) || expectedUsd <= 0) {
+    const reason = "Transaction has no valid expected amount";
+    await admin
+      .from("transactions")
+      .update({ status: "rejected", rejection_reason: reason })
+      .eq("id", row.id)
+      .eq("status", "pending");
+    return json({ ok: false, status: "rejected", reason }, 200);
+  }
+
+  let outcome: VerifyOutcome;
+  try {
+    outcome =
+      network === "BEP20"
+        ? await verifyBep20(txHash, expectedUsd)
+        : await verifySolana(txHash, expectedUsd);
+  } catch (error) {
+    // RPC / configuration trouble is not proof of a bad payment: keep the
+    // deposit pending so the next cron tick retries it.
+    const message = error instanceof Error ? error.message : "Verification failed";
+    console.error("[verify-crypto-deposit] rpc error", { txHash, network, message });
+    await admin
+      .from("transactions")
+      .update({ last_verification_at: new Date().toISOString() })
+      .eq("id", row.id);
+    return json({ ok: false, status: "pending", tx_hash: txHash, error: message }, 502);
+  }
+
+  const now = new Date();
+
+  if (outcome.status === "pending") {
+    await admin
+      .from("transactions")
+      .update({ last_verification_at: now.toISOString() })
+      .eq("id", row.id);
+    return json({ ok: true, status: "pending", tx_hash: txHash, reason: outcome.reason }, 202);
+  }
+
+  if (outcome.status === "rejected") {
+    const { data: updated, error } = await admin
+      .from("transactions")
+      .update({
+        status: "rejected",
+        rejection_reason: outcome.reason,
+        last_verification_at: now.toISOString(),
+      })
+      .eq("id", row.id)
+      .eq("status", "pending")
+      .select("id")
+      .maybeSingle();
+    if (error) {
+      console.error("[verify-crypto-deposit] could not reject transaction", error);
+      return json({ ok: false, error: "Failed to update transaction" }, 500);
+    }
+    if (!updated) {
+      // A concurrent call already decided this transaction.
+      return json({ ok: true, status: "already_processed", tx_hash: txHash });
+    }
+    return json({ ok: true, status: "rejected", tx_hash: txHash, reason: outcome.reason }, 200);
+  }
+
+  // Success: flip the deposit first, guarded by status=pending so a concurrent
+  // invocation cannot activate the plan twice.
+  const { data: updated, error: updateError } = await admin
+    .from("transactions")
+    .update({
+      status: "completed",
+      rejection_reason: null,
+      last_verification_at: now.toISOString(),
+    })
+    .eq("id", row.id)
+    .eq("status", "pending")
+    .select("id")
+    .maybeSingle();
+
+  if (updateError) {
+    console.error("[verify-crypto-deposit] could not complete transaction", updateError);
+    return json({ ok: false, error: "Failed to update transaction" }, 500);
+  }
+  if (!updated) {
+    return json({ ok: true, status: "already_processed", tx_hash: txHash });
+  }
+
+  if (row.user_id) {
+    const planName = normalizePlanName(row.plan_name, body.plan_id);
+    const expiresAt = new Date(now.getTime() + PLAN_DAYS * 24 * 60 * 60 * 1000);
+    const { error: profileError } = await admin
+      .from("profiles")
+      .update({
+        plan_name: planName,
+        plan_started_at: now.toISOString(),
+        plan_expires_at: expiresAt.toISOString(),
+      })
+      .eq("id", row.user_id);
+
+    if (profileError) {
+      // The payment is confirmed; log the profile problem for an admin to fix
+      // but never roll the successful deposit back.
+      console.error("[verify-crypto-deposit] could not activate plan", profileError);
+      return json(
+        {
+          ok: true,
+          status: "completed",
+          tx_hash: txHash,
+          received: outcome.received,
+          warning: "Deposit completed but the profile plan could not be updated",
+        },
+        200,
+      );
+    }
+  }
+
+  return json(
+    {
+      ok: true,
+      status: "completed",
+      tx_hash: txHash,
+      received: outcome.received,
+      expected: outcome.expected,
+      plan_name: normalizePlanName(row.plan_name, body.plan_id),
+    },
+    200,
+  );
+}
+
+Deno.serve(handle);
