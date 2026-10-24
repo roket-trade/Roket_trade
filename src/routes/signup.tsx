@@ -1,10 +1,15 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import { toast } from "sonner";
 import { AuthShell } from "@/components/AuthShell";
 import { supabase } from "@/integrations/supabase/client";
+import { readReferralCode } from "@/lib/referral";
 
 export const Route = createFileRoute("/signup")({
+  // A code such as "80758E76" is a valid JSON number (8.0758e+80), so the
+  // router's default search parser hands it to us as a number. Never coerce
+  // it back into a code here — the component reads the raw query string
+  // instead (see `readReferralCode`), which keeps the value a string.
   validateSearch: (s: Record<string, unknown>): { ref?: string } => {
     const ref = typeof s.ref === "string" ? s.ref.trim() : "";
     return ref ? { ref } : {};
@@ -25,18 +30,24 @@ const input =
 
 function Signup() {
   const navigate = useNavigate();
-  const search = Route.useSearch();
+  // Read the raw query string: the router's parsed search already turned
+  // ?ref=80758E76 into the number 8.0758e+80. `readReferralCode` uses
+  // URLSearchParams and keeps the value strictly a string.
+  const searchStr = useRouterState({ select: (state) => state.location.searchStr });
+  const linkedReferralCode = readReferralCode(
+    searchStr || (typeof window !== "undefined" ? window.location.search : ""),
+  );
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [referralCode, setReferralCode] = useState(search.ref ?? "");
+  const [referralCode, setReferralCode] = useState(linkedReferralCode);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    if (search.ref) setReferralCode(search.ref);
-  }, [search.ref]);
+    if (linkedReferralCode) setReferralCode(linkedReferralCode);
+  }, [linkedReferralCode]);
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -203,7 +214,7 @@ function Signup() {
             autoComplete="off"
             maxLength={20}
           />
-          {search.ref && (
+          {linkedReferralCode && (
             <p className="text-xs text-primary">Referral code filled from your invite link.</p>
           )}
         </div>

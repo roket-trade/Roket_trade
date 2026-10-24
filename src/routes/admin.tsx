@@ -142,7 +142,7 @@ function AdminContent() {
       if (!Number.isFinite(credit) || credit <= 0) throw new Error("Invalid deposit amount.");
       const { error: txErr } = await supabase.from("transactions").update({ status: "completed" }).eq("id", tx.id);
       if (txErr) throw txErr;
-      const { data: up, error: uErr } = await supabase.from("profiles").select("id,main_balance,referred_by").eq("id", tx.user_id).maybeSingle();
+      const { data: up, error: uErr } = await supabase.from("profiles").select("id,full_name,main_balance,referred_by").eq("id", tx.user_id).maybeSingle();
       if (uErr) throw uErr;
       if (!up) throw new Error("User profile not found.");
       const nextBal = Math.round((Number(up.main_balance ?? 0) + credit) * 100) / 100;
@@ -174,7 +174,29 @@ function AdminContent() {
         if (ref) {
           const nextRef = Math.round((Number(ref.main_balance ?? 0) + bonus) * 100) / 100;
           await supabase.from("profiles").update({ main_balance: nextRef }).eq("id", refId);
-          await supabase.from("transactions").insert({ user_id: refId, type: "referral_bonus", amount: bonus, status: "completed" });
+          // Link the bonus to the referred user so the dashboard can show how
+          // much was earned from each referral (see the referral-bonus
+          // migration for transactions.referred_user_id).
+          const referredName = up.full_name || "referred user";
+          let { error: bonusErr } = await supabase.from("transactions").insert({
+            user_id: refId,
+            type: "referral_bonus",
+            amount: bonus,
+            status: "completed",
+            referred_user_id: tx.user_id,
+            description: `10% referral bonus from ${referredName}'s ${money(credit)} deposit`,
+          });
+          // Databases without the referral-bonus migration yet reject the new
+          // columns; the bonus itself must still be recorded.
+          if (bonusErr && (bonusErr.code === "PGRST204" || bonusErr.code === "42703")) {
+            ({ error: bonusErr } = await supabase.from("transactions").insert({
+              user_id: refId,
+              type: "referral_bonus",
+              amount: bonus,
+              status: "completed",
+            }));
+          }
+          if (bonusErr) throw bonusErr;
           toast.success(`Approved. Referrer earned ${money(bonus)}.`);
         } else toast.success("Approved (referrer not found).");
       } else toast.success("Deposit approved.");

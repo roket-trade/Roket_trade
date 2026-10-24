@@ -23,6 +23,7 @@ import type { Tables } from "@/integrations/supabase/types";
 import { createPlatformStats } from "@/lib/platform-stats";
 import type { PlatformStats } from "@/lib/platform-stats";
 import { PAYMENT_VERIFICATION_EVENT } from "@/lib/payment-verification";
+import { buildReferralLink } from "@/lib/referral";
 
 export const Route = createFileRoute("/dashboard")({
   head: () => ({
@@ -51,6 +52,15 @@ type ReferralMember = {
   id: string;
   full_name: string;
   created_at: string;
+  /** Total 10% bonuses earned from this referred user (0 when none yet). */
+  bonus: number;
+};
+
+type ReferralBonusRow = {
+  amount: number | string | null;
+  created_at: string;
+  /** Added by the referral-bonus migration; absent on legacy rows. */
+  referred_user_id?: string | null;
 };
 
 type ActivePlan = {
@@ -447,12 +457,14 @@ function ReferralCard({
   code,
   link,
   referrals,
-  onCopy,
+  onCopyCode,
+  onCopyLink,
 }: {
   code: string;
   link: string;
   referrals: ReferralMember[];
-  onCopy: () => void;
+  onCopyCode: () => void;
+  onCopyLink: () => void;
 }) {
   return (
     <section className="rounded-2xl border border-gray-800 bg-gray-900/50 p-5 backdrop-blur">
@@ -470,8 +482,8 @@ function ReferralCard({
         <span className="font-mono text-sm font-bold text-emerald-400">{code || "—"}</span>
         <button
           type="button"
-          onClick={onCopy}
-          disabled={!link}
+          onClick={onCopyCode}
+          disabled={!code}
           className="rounded-md border border-gray-700 px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-gray-300 transition hover:border-emerald-400 hover:text-emerald-400 disabled:cursor-not-allowed disabled:opacity-40"
         >
           Copy
@@ -480,6 +492,15 @@ function ReferralCard({
       <p className="mt-2 break-all font-mono text-[10px] leading-relaxed text-muted-foreground">
         {link || "—"}
       </p>
+
+      <button
+        type="button"
+        onClick={onCopyLink}
+        disabled={!link}
+        className="mt-2 w-full rounded-md border border-emerald-500/40 bg-emerald-500/10 px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-emerald-400 transition hover:border-emerald-400 hover:text-emerald-300 disabled:cursor-not-allowed disabled:opacity-40"
+      >
+        Copy Link
+      </button>
 
       <p className="mt-5 text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
         Latest 5 Referrals
@@ -491,12 +512,17 @@ function ReferralCard({
           referrals.map((member) => (
             <li key={member.id} className="flex items-center justify-between gap-2 py-2 text-xs">
               <span className="truncate text-foreground">{member.full_name || "Member"}</span>
-              <span className="shrink-0 text-[10px] text-muted-foreground">
-                {new Date(member.created_at).toLocaleDateString("en-US", {
-                  month: "short",
-                  day: "numeric",
-                  year: "numeric",
-                })}
+              <span className="flex shrink-0 items-center gap-2">
+                {member.bonus > 0 && (
+                  <span className="font-semibold text-emerald-400">+{money(member.bonus)}</span>
+                )}
+                <span className="text-[10px] text-muted-foreground">
+                  {new Date(member.created_at).toLocaleDateString("en-US", {
+                    month: "short",
+                    day: "numeric",
+                    year: "numeric",
+                  })}
+                </span>
               </span>
             </li>
           ))
@@ -829,6 +855,42 @@ function DashboardContent() {
         return;
       }
 
+      // Referral bonuses are attributed to the referred user through
+      // transactions.referred_user_id (added by the referral-bonus migration).
+      // A database that has not run it yet rejects that column, so fall back to
+      // the legacy column set instead of blanking the referral card.
+      const loadReferralBonuses = async (): Promise<ReferralBonusRow[]> => {
+        const withLink = await supabase
+          .from("transactions")
+          .select("amount,created_at,referred_user_id")
+          .eq("user_id", currentUser.id)
+          .eq("type", "referral_bonus");
+        if (!withLink.error) return (withLink.data ?? []) as ReferralBonusRow[];
+
+        const missingColumn = withLink.error.code === "42703" || withLink.error.code === "PGRST204";
+        if (!missingColumn) {
+          console.error("[dashboard] referral bonus fetch failed", {
+            message: withLink.error.message,
+            code: withLink.error.code,
+          });
+          return [];
+        }
+
+        const legacy = await supabase
+          .from("transactions")
+          .select("amount,created_at")
+          .eq("user_id", currentUser.id)
+          .eq("type", "referral_bonus");
+        if (legacy.error) {
+          console.error("[dashboard] referral bonus fetch failed", {
+            message: legacy.error.message,
+            code: legacy.error.code,
+          });
+          return [];
+        }
+        return (legacy.data ?? []) as ReferralBonusRow[];
+      };
+
       // Secondary dashboard data — failures here must not block the page.
       // All recent-list queries + aggregates run in one parallel batch.
       const [
@@ -846,11 +908,7 @@ function DashboardContent() {
           .select("amount")
           .eq("user_id", currentUser.id)
           .eq("type", "ad_earning"),
-        supabase
-          .from("transactions")
-          .select("amount")
-          .eq("user_id", currentUser.id)
-          .eq("type", "referral_bonus"),
+        loadReferralBonuses(),
         supabase
           .from("transactions")
           .select("amount,created_at,wallet_address")
@@ -922,9 +980,38 @@ function DashboardContent() {
         ),
       );
 
+      const referralBonuses = bonusRows ?? [];
+
+      // Group the 10% bonuses by the referred user they came from. Rows that
+      // predate transactions.referred_user_id are unlinked; they still count
+      // toward the Referral Bonus total (the migration backfills the
+      // unambiguous ones) but are not attributed to a name here.
+      const bonusByReferredUser = new Map<string, number>();
+      for (const row of referralBonuses) {
+        const amount = Math.abs(Number(row.amount) || 0);
+        const linkedTo = row.referred_user_id ?? null;
+        if (linkedTo) {
+          bonusByReferredUser.set(
+            linkedTo,
+            round2((bonusByReferredUser.get(linkedTo) ?? 0) + amount),
+          );
+        }
+      }
+
+      const referralMembers = (
+        (referralRows.data ?? []) as Array<{
+          id: string;
+          full_name: string;
+          created_at: string;
+        }>
+      ).map((member) => ({
+        ...member,
+        bonus: bonusByReferredUser.get(member.id) ?? 0,
+      }));
+
       setSummary({
         adReward: round2(sumAmounts(adRows.data)),
-        referralBonus: round2(sumAmounts(bonusRows.data)),
+        referralBonus: round2(sumAmounts(referralBonuses)),
         dailyProfit: dailyProfitTotal,
         totalWithdrawn: sumAmounts(withdrawals),
         latestWithdraw: withdrawals[0]
@@ -944,7 +1031,7 @@ function DashboardContent() {
       });
 
       setAdEarnings((adEarningsRows.data ?? []) as AdEarning[]);
-      setReferrals((referralRows.data ?? []) as ReferralMember[]);
+      setReferrals(referralMembers);
       setRecentWithdrawals((recentWithdrawalRows.data ?? []) as RecentWithdrawal[]);
     } catch (err) {
       if (id !== requestId.current) return;
@@ -994,12 +1081,10 @@ function DashboardContent() {
       : "Trader");
   const email = user?.email ?? "";
   // Prefer the profile's saved referral code; fall back to the short user id.
-  const referralCode =
-    profile?.referral_code ?? (user?.id ? user.id.slice(0, 8).toUpperCase() : "");
-  const referralLink =
-    referralCode && typeof window !== "undefined"
-      ? `https://roket.bond/signup?ref=${referralCode}`
-      : "";
+  const referralCode = String(
+    profile?.referral_code ?? (user?.id ? user.id.slice(0, 8).toUpperCase() : ""),
+  );
+  const referralLink = buildReferralLink(referralCode);
   // The KYC gate is only trustworthy once the profile row has been read:
   // loading === false, no fetch error, and a real row in hand.
   const profileLoaded = !loading && !profileError && profile !== null;
@@ -1106,7 +1191,19 @@ function DashboardContent() {
     }
   };
 
-  const copyReferral = async () => {
+  // The code button copies the code itself; the link button copies the full
+  // https://roket.bond/signup?ref=... share URL.
+  const copyReferralCode = async () => {
+    if (!referralCode) return;
+    try {
+      await navigator.clipboard.writeText(referralCode);
+      toast.success("Referral code copied");
+    } catch {
+      toast.error("Couldn't copy — please copy it manually");
+    }
+  };
+
+  const copyReferralLink = async () => {
     if (!referralLink) return;
     try {
       await navigator.clipboard.writeText(referralLink);
@@ -1600,7 +1697,8 @@ function DashboardContent() {
                 code={referralCode}
                 link={referralLink}
                 referrals={referrals}
-                onCopy={copyReferral}
+                onCopyCode={copyReferralCode}
+                onCopyLink={copyReferralLink}
               />
               <WithdrawCard
                 available={totalBalance}
