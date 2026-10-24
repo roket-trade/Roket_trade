@@ -828,6 +828,7 @@ function DashboardContent() {
   const [withdrawalOpen, setWithdrawalOpen] = useState(false);
   const [withdrawalBusy, setWithdrawalBusy] = useState(false);
   const [withdrawalSuccess, setWithdrawalSuccess] = useState(false);
+  const [submissionDone, setSubmissionDone] = useState(false);
   const [withdrawAmount, setWithdrawAmount] = useState("");
   const [selectedWallet, setSelectedWallet] = useState<{
     type: WalletType;
@@ -1364,6 +1365,7 @@ function DashboardContent() {
 
   const submitWithdrawal = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (submissionDone) return;
     if (!user || withdrawalBusy) return;
     if (withdrawLocked) {
       toast.error(withdrawBlockedReason || "Withdrawals are limited to once every 7 days.");
@@ -1393,6 +1395,7 @@ function DashboardContent() {
     }
 
     setWithdrawalBusy(true);
+    setSubmissionDone(false); // allow previous call to finish without re-triggering UI flash
     try {
       const nowIso = new Date().toISOString();
       const address = selectedWallet.address.trim();
@@ -1425,6 +1428,8 @@ function DashboardContent() {
       setHoldTimer(null);
       setHoldStartTime(null);
       setWithdrawalSuccess(true);
+      setSubmissionDone(true); // block any further submissions (hold-timer + button)
+      // Single success toast only — prevents infinite stacking on repeated submit calls.
       toast.success("Withdrawal request submitted for manual review.");
     } catch (err) {
       const message = err instanceof Error ? err.message : "Couldn't submit withdrawal.";
@@ -1481,6 +1486,8 @@ function DashboardContent() {
   useEffect(() => {
     if (!withdrawalSuccess) return;
     const t = setTimeout(() => setWithdrawalSuccess(false), 3000);
+    // Clear the timer only when the component unmounts or the dependency changes;
+    // NOT on every render, so the notification actually disappears.
     return () => clearTimeout(t);
   }, [withdrawalSuccess]);
 
