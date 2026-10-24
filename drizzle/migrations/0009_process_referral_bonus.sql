@@ -27,7 +27,6 @@ CREATE UNIQUE INDEX IF NOT EXISTS transactions_referral_bonus_source_key
 COMMENT ON COLUMN public.transactions.source_tx_id IS
   'For type = referral_bonus: the completed deposit transaction that generated the bonus.';
 
-
 -- ---------------------------------------------------------------------------
 -- 2) Atomic award
 -- ---------------------------------------------------------------------------
