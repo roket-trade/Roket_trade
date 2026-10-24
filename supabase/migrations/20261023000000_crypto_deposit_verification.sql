@@ -152,7 +152,7 @@ BEGIN
       WHERE t.type = 'deposit'
         AND t.status = 'pending'
         AND t.tx_hash IS NOT NULL
-        AND t.network IN ('BEP20', 'SOL')
+        AND upper(t.network) IN ('BEP20', 'SOL')
         AND t.created_at > now() - interval '24 hours'
         -- Cap retries: after ~30 minutes the deposit stays pending for a human
         -- to review instead of hammering the public RPC forever.
