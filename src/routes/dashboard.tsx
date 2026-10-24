@@ -1504,12 +1504,15 @@ function DashboardContent() {
     try {
       const { error } = await supabase
         .from("profiles")
-        .update({ saved_wallets, default_wallet_type: defaultWalletType })
+        .update({
+          saved_wallets: savedWallets,
+          default_wallet_type: defaultWalletType,
+        })
         .eq("id", user.id);
       if (error) throw error;
       setProfile((current) =>
         current
-          ? { ...current, saved_wallets, default_wallet_type }
+          ? { ...current, saved_wallets: savedWallets, default_wallet_type: defaultWalletType }
           : current,
       );
       toast.success("Wallet addresses saved.");
