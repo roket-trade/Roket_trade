@@ -122,6 +122,7 @@ export type Database = {
           plan_name: string | null
           referred_user_id: string | null
           rejection_reason: string | null
+          source_tx_id: string | null
           status: string
           tx_hash: string | null
           type: string
@@ -140,6 +141,7 @@ export type Database = {
           plan_name?: string | null
           referred_user_id?: string | null
           rejection_reason?: string | null
+          source_tx_id?: string | null
           status?: string
           tx_hash?: string | null
           type: string
@@ -158,6 +160,7 @@ export type Database = {
           plan_name?: string | null
           referred_user_id?: string | null
           rejection_reason?: string | null
+          source_tx_id?: string | null
           status?: string
           tx_hash?: string | null
           type?: string
@@ -179,6 +182,10 @@ export type Database = {
       resolve_referral_code: {
         Args: { code: string }
         Returns: string | null
+      }
+      process_referral_bonus: {
+        Args: { p_deposit_tx_id: string }
+        Returns: Json
       }
     }
     Enums: {
