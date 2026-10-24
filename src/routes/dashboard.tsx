@@ -89,6 +89,8 @@ type DashboardSummary = {
   totalWithdrawn: number;
   latestWithdraw: LatestWithdraw | null;
   activePlan: ActivePlan | null;
+  totalDeposited: number;
+  totalPendingWithdrawals: number;
 };
 
 const EMPTY_SUMMARY: DashboardSummary = {
@@ -99,6 +101,7 @@ const EMPTY_SUMMARY: DashboardSummary = {
   latestWithdraw: null,
   activePlan: null,
   totalDeposited: 0,
+  totalPendingWithdrawals: 0,
 };
 
 type WalletType = "bep20" | "solana" | "trc20";
@@ -960,6 +963,7 @@ function DashboardContent() {
         bonusRows,
         withdrawalRows,
         depositRows,
+        pendingWithdrawalRows,
         adEarningsRows,
         referralRows,
         recentWithdrawalRows,
@@ -984,6 +988,13 @@ function DashboardContent() {
           .eq("user_id", currentUser.id)
           .eq("type", "deposit")
           .eq("status", "completed")
+          .order("created_at", { ascending: false }),
+        supabase
+          .from("transactions")
+          .select("amount")
+          .eq("user_id", currentUser.id)
+          .eq("type", "withdrawal")
+          .eq("status", "pending")
           .order("created_at", { ascending: false }),
         supabase
           .from("transactions")
@@ -1031,6 +1042,9 @@ function DashboardContent() {
         | undefined;
 
       const totalDeposited = round2(sumDeposits(depositRows.data));
+      const totalPendingWithdrawals = round2(
+        sumAmounts(pendingWithdrawalRows.data),
+      );
 
       const dailyProfitTotal = round2(
         Math.max(
@@ -1078,6 +1092,7 @@ function DashboardContent() {
         dailyProfit: dailyProfitTotal,
         totalWithdrawn: sumAmounts(withdrawals),
         totalDeposited,
+        totalPendingWithdrawals,
         latestWithdraw: withdrawals[0]
           ? {
               amount: Math.abs(Number(withdrawals[0].amount) || 0),
@@ -1279,9 +1294,13 @@ function DashboardContent() {
 
   const totalBalance = mainBalance + extraBalance;
   // A user may only withdraw profits: total earnings (Main + Extra) minus the
-  // total amount they have deposited. Never let them withdraw their own
-  // initial capital, and floor at $0.00.
-  const availableWithdrawal = Math.max(0, totalBalance - summary.totalDeposited);
+  // total amount they have deposited and minus any pending withdrawal requests.
+  // This drops the available balance immediately when a request is made,
+  // preventing multiple pending requests that exceed the actual balance.
+  const availableWithdrawal = Math.max(
+    0,
+    totalBalance - summary.totalDeposited - summary.totalPendingWithdrawals,
+  );
 
   // Total Balance card shows money EARNED only — never deposits. Main is the
   // sum of daily_profit transactions; Extra is ads + referral bonuses.
