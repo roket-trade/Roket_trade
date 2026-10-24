@@ -513,8 +513,10 @@ function ReferralCard({
             <li key={member.id} className="flex items-center justify-between gap-2 py-2 text-xs">
               <span className="truncate text-foreground">{member.full_name || "Member"}</span>
               <span className="flex shrink-0 items-center gap-2">
-                {member.bonus > 0 && (
+                {member.bonus > 0 ? (
                   <span className="font-semibold text-emerald-400">+{money(member.bonus)}</span>
+                ) : (
+                  <span className="font-semibold text-muted-foreground">+$0.00</span>
                 )}
                 <span className="text-[10px] text-muted-foreground">
                   {new Date(member.created_at).toLocaleDateString("en-US", {
