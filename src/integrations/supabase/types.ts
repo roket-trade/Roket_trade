@@ -115,10 +115,12 @@ export type Database = {
           amount: number
           created_at: string
           deposit_amount: number | null
+          description: string | null
           id: string
           last_verification_at: string | null
           network: string | null
           plan_name: string | null
+          referred_user_id: string | null
           rejection_reason: string | null
           status: string
           tx_hash: string | null
@@ -131,10 +133,12 @@ export type Database = {
           amount: number
           created_at?: string
           deposit_amount?: number | null
+          description?: string | null
           id?: string
           last_verification_at?: string | null
           network?: string | null
           plan_name?: string | null
+          referred_user_id?: string | null
           rejection_reason?: string | null
           status?: string
           tx_hash?: string | null
@@ -147,10 +151,12 @@ export type Database = {
           amount?: number
           created_at?: string
           deposit_amount?: number | null
+          description?: string | null
           id?: string
           last_verification_at?: string | null
           network?: string | null
           plan_name?: string | null
+          referred_user_id?: string | null
           rejection_reason?: string | null
           status?: string
           tx_hash?: string | null
