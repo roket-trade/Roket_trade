@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { AuthShell } from "@/components/AuthShell";
 import { supabase } from "@/integrations/supabase/client";
 
@@ -29,6 +29,7 @@ const input =
 
 function Login() {
   const search = Route.useSearch();
+  const navigate = useNavigate();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -50,7 +51,17 @@ function Login() {
       return;
     }
 
-    window.location.assign(search.redirect || "/dashboard");
+    // Sanitize redirect: default to /dashboard if missing, /login, or /login?...
+    let safeRedirect = search.redirect;
+    if (
+      !safeRedirect ||
+      safeRedirect === "/login" ||
+      safeRedirect.startsWith("/login?")
+    ) {
+      safeRedirect = "/dashboard";
+    }
+
+    navigate({ to: safeRedirect, replace: true });
   };
 
   return (

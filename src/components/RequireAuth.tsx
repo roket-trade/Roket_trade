@@ -9,6 +9,8 @@ export function RequireAuth({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (loading || user) return;
+    // Prevent redirect loop: if already on /login, do not redirect again.
+    if (location.pathname === "/login") return;
     navigate({
       to: "/login",
       search: { redirect: `${location.pathname}${location.searchStr}` },
