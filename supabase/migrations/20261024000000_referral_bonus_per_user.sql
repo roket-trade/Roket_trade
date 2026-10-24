@@ -55,7 +55,11 @@ mapping AS (
   SELECT b.bonus_id, r.only_referral
     FROM single_bonus AS b
     JOIN referrals AS r
-      ON r.referred_by = b.user_id
+      -- profiles.referred_by is text in the live schema while
+      -- transactions.user_id is uuid, and text = uuid has no operator
+      -- (SQLSTATE 42883). Cast both sides to text so this works whether
+      -- referred_by is text or uuid.
+      ON r.referred_by::text = b.user_id::text
      AND r.referral_count = 1
 )
 UPDATE public.transactions AS t
