@@ -22,6 +22,7 @@ import { supabase } from "@/integrations/supabase/client";
 import type { Tables } from "@/integrations/supabase/types";
 import { createPlatformStats } from "@/lib/platform-stats";
 import type { PlatformStats } from "@/lib/platform-stats";
+import { PAYMENT_VERIFICATION_EVENT } from "@/lib/payment-verification";
 
 export const Route = createFileRoute("/dashboard")({
   head: () => ({
@@ -959,6 +960,16 @@ function DashboardContent() {
 
   useEffect(() => {
     void fetchProfile();
+  }, [fetchProfile]);
+
+  // A verified deposit activates the plan server-side; refresh the dashboard as
+  // soon as the global payment bar reports success.
+  useEffect(() => {
+    const onVerified = () => {
+      void fetchProfile();
+    };
+    window.addEventListener(PAYMENT_VERIFICATION_EVENT, onVerified);
+    return () => window.removeEventListener(PAYMENT_VERIFICATION_EVENT, onVerified);
   }, [fetchProfile]);
 
   // Platform-wide mock statistics. These are intentionally independent of the

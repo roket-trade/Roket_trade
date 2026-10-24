@@ -4,6 +4,7 @@ import { QRCodeSVG } from "qrcode.react";
 import { toast } from "sonner";
 import { z } from "zod";
 import { RequireAuth } from "@/components/RequireAuth";
+import { usePaymentVerification } from "@/components/PaymentVerificationProvider";
 import { supabase } from "@/integrations/supabase/client";
 
 const PLANS = {
@@ -63,6 +64,7 @@ function Checkout() {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState(false);
+  const { startVerification } = usePaymentVerification();
   const address = NETWORKS[net].address;
 
   const copy = async () => {
@@ -147,8 +149,12 @@ function Checkout() {
         toast.error(msg);
         return;
       }
+      // Close the payment form immediately. Verification happens in the
+      // background (pg_cron -> verify-crypto-deposit); the global bar reports
+      // the Realtime status change — we never block the UI on it.
       setDone(true);
-      toast.success("Payment submitted");
+      startVerification({ txHash: parsed.data, userId, planName: plan.name });
+      toast.success("Payment submitted — verifying on-chain");
     } catch (err) {
       console.error("[checkout] submit failed:", err);
       const message =
@@ -188,17 +194,28 @@ function Checkout() {
 
           {done ? (
             <section className="rounded-2xl border border-primary bg-card p-8 text-center shadow-glow">
-              <h2 className="font-display text-2xl font-bold">Payment submitted successfully</h2>
+              <h2 className="font-display text-2xl font-bold">Payment submitted</h2>
               <p className="mt-3">
-                Your transaction is pending manual verification. Your plan will be activated once
-                the payment is confirmed.
+                We&apos;re verifying your transaction on the blockchain. Your plan activates
+                automatically once it confirms — you can close this page.
               </p>
-              <Link
-                to="/"
-                className="mt-6 inline-block rounded-lg bg-brand px-6 py-3 font-display font-bold text-primary-foreground"
-              >
-                Back to home
-              </Link>
+              <p className="mt-4 break-all rounded-lg border bg-muted px-3 py-2 font-mono text-xs text-muted-foreground">
+                TxID: {tx}
+              </p>
+              <div className="mt-6 flex flex-wrap justify-center gap-2">
+                <Link
+                  to="/dashboard"
+                  className="inline-block rounded-lg bg-brand px-6 py-3 font-display font-bold text-primary-foreground"
+                >
+                  Go to dashboard
+                </Link>
+                <Link
+                  to="/"
+                  className="inline-block rounded-lg border border-primary px-6 py-3 font-display font-bold text-primary hover:bg-primary/10"
+                >
+                  Back to home
+                </Link>
+              </div>
             </section>
           ) : (
             <section className="rounded-2xl border bg-card p-6 shadow-glow">

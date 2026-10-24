@@ -65,6 +65,7 @@ export type Database = {
           main_balance: number | null
           phone_number: string | null
           plan_expires_at: string | null
+          plan_name: string | null
           plan_started_at: string | null
           referral_code: string
           referred_by: string | null
@@ -83,6 +84,7 @@ export type Database = {
           main_balance?: number | null
           phone_number?: string | null
           plan_expires_at?: string | null
+          plan_name?: string | null
           plan_started_at?: string | null
           referral_code?: string
           referred_by?: string | null
@@ -101,6 +103,7 @@ export type Database = {
           main_balance?: number | null
           phone_number?: string | null
           plan_expires_at?: string | null
+          plan_name?: string | null
           plan_started_at?: string | null
           referral_code?: string
           referred_by?: string | null
@@ -113,12 +116,15 @@ export type Database = {
           created_at: string
           deposit_amount: number | null
           id: string
+          last_verification_at: string | null
           network: string | null
           plan_name: string | null
+          rejection_reason: string | null
           status: string
           tx_hash: string | null
           type: string
           user_id: string | null
+          verification_attempts: number
           wallet_address: string | null
         }
         Insert: {
@@ -126,12 +132,15 @@ export type Database = {
           created_at?: string
           deposit_amount?: number | null
           id?: string
+          last_verification_at?: string | null
           network?: string | null
           plan_name?: string | null
+          rejection_reason?: string | null
           status?: string
           tx_hash?: string | null
           type: string
           user_id?: string | null
+          verification_attempts?: number
           wallet_address?: string | null
         }
         Update: {
@@ -139,12 +148,15 @@ export type Database = {
           created_at?: string
           deposit_amount?: number | null
           id?: string
+          last_verification_at?: string | null
           network?: string | null
           plan_name?: string | null
+          rejection_reason?: string | null
           status?: string
           tx_hash?: string | null
           type?: string
           user_id?: string | null
+          verification_attempts?: number
           wallet_address?: string | null
         }
         Relationships: []
