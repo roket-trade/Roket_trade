@@ -44,8 +44,13 @@ const SignupPage = () => {
   return <Component />;
 };
 
+const setUrl = (search: string) => {
+  window.history.replaceState({}, "", `/signup${search}`);
+};
+
 beforeEach(() => {
   routerState.searchStr = "";
+  setUrl("");
 });
 
 afterEach(() => {
@@ -78,7 +83,7 @@ describe("buildReferralLink", () => {
 
 describe("Signup referral auto-fill", () => {
   it("fills the referral input with the raw code, not scientific notation", () => {
-    routerState.searchStr = "?ref=80758E76";
+    setUrl("?ref=80758E76");
     render(<SignupPage />);
 
     expect(screen.getByLabelText("Referral Code")).toHaveValue("80758E76");
@@ -86,8 +91,18 @@ describe("Signup referral auto-fill", () => {
     expect(screen.getByText("Referral code filled from your invite link.")).toBeInTheDocument();
   });
 
+  it("ignores the router's parsed search even when it reports the number form", () => {
+    // The router's stringifySearch re-serializes the parsed number.
+    routerState.searchStr = "?ref=8.0758e%2B80";
+    setUrl("?ref=80758E76");
+    render(<SignupPage />);
+
+    expect(screen.getByLabelText("Referral Code")).toHaveValue("80758E76");
+    expect(screen.queryByDisplayValue("8.0758e+80")).toBeNull();
+  });
+
   it("leaves the referral input empty without a ref parameter", () => {
-    routerState.searchStr = "";
+    setUrl("");
     render(<SignupPage />);
 
     expect(screen.getByLabelText("Referral Code")).toHaveValue("");
