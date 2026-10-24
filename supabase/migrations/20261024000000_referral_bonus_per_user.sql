@@ -50,14 +50,18 @@ referrals AS (
     FROM public.profiles AS p
    WHERE p.referred_by IS NOT NULL
    GROUP BY p.referred_by
+),
+mapping AS (
+  SELECT b.bonus_id, r.only_referral
+    FROM single_bonus AS b
+    JOIN referrals AS r
+      ON r.referred_by = b.user_id
+     AND r.referral_count = 1
 )
 UPDATE public.transactions AS t
-   SET referred_user_id = r.only_referral
-  FROM single_bonus AS b
-  JOIN referrals AS r
-    ON r.referred_by = b.user_id
-   AND r.referral_count = 1
- WHERE t.id = b.bonus_id;
+   SET referred_user_id = m.only_referral
+  FROM mapping AS m
+ WHERE t.id = m.bonus_id;
 
 COMMENT ON COLUMN public.transactions.referred_user_id IS
   'For type = referral_bonus: the referred profile whose deposit generated the bonus.';
