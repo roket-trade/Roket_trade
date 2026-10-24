@@ -829,6 +829,7 @@ function DashboardContent() {
   const [withdrawalBusy, setWithdrawalBusy] = useState(false);
   const [withdrawalSuccess, setWithdrawalSuccess] = useState(false);
   const [submissionDone, setSubmissionDone] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
   const hasSubmitted = useRef(false); // one-shot guard: prevent hold-timer from re-triggering submit
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [withdrawAmount, setWithdrawAmount] = useState("");
@@ -1434,8 +1435,12 @@ function DashboardContent() {
       // Single success toast only â€” prevents infinite stacking on repeated submit calls.
       toast.success("Withdrawal request submitted for manual review.");
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Couldn't submit withdrawal.";
-      toast.error(message);
+      if (err instanceof Error && err.message?.includes('23505')) {
+        toast.error("You already have a pending withdrawal request.");
+      } else {
+        const message = err instanceof Error ? err.message : "Couldn't submit withdrawal.";
+        toast.error(message);
+      }
     } finally {
       setWithdrawalBusy(false);
     }
@@ -1449,14 +1454,15 @@ function DashboardContent() {
     parsedWithdrawAmount <= 200 &&
     parsedWithdrawAmount <= availableWithdrawal;
 
-  const startHold = (e: React.MouseEvent) => {
+  const startHold = (e: React.PointerEvent) => {
     e.preventDefault();
     if (
       withdrawalBusy ||
       holdActive ||
       withdrawLocked ||
       !selectedWallet?.address.trim() ||
-      !isWithdrawAmountValid
+      !isWithdrawAmountValid ||
+      isProcessing
     )
       return;
     setHoldActive(true);
@@ -2289,9 +2295,9 @@ function DashboardContent() {
               <div className="space-y-2">
                 <button
                   type="button"
-                  onMouseDown={startHold}
-                  onMouseUp={cancelHold}
-                  onMouseLeave={cancelHold}
+                  onPointerDown={startHold}
+                  onPointerUp={cancelHold}
+                  onPointerLeave={cancelHold}
                   onDragEnd={cancelHold}
                   disabled={
                     withdrawalBusy ||
