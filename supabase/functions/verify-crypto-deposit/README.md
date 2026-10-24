@@ -48,7 +48,9 @@ caller cannot underpay while claiming a cheaper plan.
 ```
 
 - `completed` — deposit flipped to `completed`; `profiles.plan_name`,
-  `plan_started_at` and `plan_expires_at` (now + 365 days) were set.
+  `plan_started_at` and `plan_expires_at` (now + 365 days) were set. The
+  response also carries `referral`, e.g. `{"awarded": true, "bonus": 6}` for the
+  referrer's 10% bonus (see below).
 - `pending` (HTTP 200) — well-formed hash, not mined/confirmed yet. The pg_cron
   job retries it on the next tick (bounded by `verification_attempts`).
 - `rejected` (HTTP 200) — definitive mismatch **or** an unusable hash / RPC
@@ -59,6 +61,26 @@ on BEP20, which previously caused a node error and a 502). A thrown RPC error is
 also caught, stored as `rejection_reason = 'Invalid transaction hash or
 transaction not found'`, and returned as HTTP 200 so the cron poller stops
 retrying that hash. Only server configuration faults reply `pending` and retry.
+
+## Referral bonus
+
+A completed deposit pays the referrer their 10% MLM bonus. The work happens in
+`public.process_referral_bonus(deposit_tx_id)` (see
+`supabase/migrations/20261025000000_process_referral_bonus.sql`) so the balance
+credit and the `referral_bonus` transaction are committed atomically and at most
+once per deposit. The function only needs the deposit id:
+
+```ts
+const { data, error } = await admin.rpc("process_referral_bonus", {
+  p_deposit_tx_id: row.id,
+});
+// data = { awarded: true, bonus: 6, referrer_id, transaction_id, ... }
+//      | { awarded: false, reason: "no_referrer" | "referrer_not_found" | "already_awarded" | ... }
+```
+
+The bonus never affects the deposit: missing referrer profiles, self-referrals,
+legacy short-code `referred_by` values and a missing RPC are logged and reported
+in `referral`, while the deposit still stays `completed`.
 
 ## Deploy
 

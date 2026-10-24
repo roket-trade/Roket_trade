@@ -368,6 +368,70 @@ async function verifySolana(txHash: string, expectedUsd: number): Promise<Verify
   };
 }
 
+type ReferralBonusResult = {
+  awarded?: boolean;
+  reason?: string;
+  bonus?: number;
+  referrer_id?: string;
+  deposit_tx_id?: string;
+  transaction_id?: string;
+};
+
+/**
+ * Pay the referrer their 10% bonus for a completed deposit.
+ *
+ * The balance credit and the transactions row happen inside
+ * public.process_referral_bonus() (see the process_referral_bonus migration),
+ * so the two writes are atomic and the award is idempotent per deposit.
+ *
+ * Never throws: the deposit is already confirmed on-chain, so a referral
+ * problem must not fail or retry the verification.
+ */
+async function awardReferralBonus(
+  admin: ReturnType<typeof createClient>,
+  depositTxId: string,
+): Promise<ReferralBonusResult | null> {
+  try {
+    const { data, error } = await admin.rpc("process_referral_bonus", {
+      p_deposit_tx_id: depositTxId,
+    });
+
+    if (error) {
+      const missingFunction = error.code === "PGRST202" || error.code === "42883";
+      console.error(
+        missingFunction
+          ? "[verify-crypto-deposit] referral bonus RPC is missing — run supabase/migrations/20261025000000_process_referral_bonus.sql"
+          : "[verify-crypto-deposit] referral bonus RPC failed",
+        { depositId: depositTxId, code: error.code, message: error.message },
+      );
+      return null;
+    }
+
+    const result = (data ?? null) as ReferralBonusResult | null;
+
+    if (result?.awarded) {
+      console.log("[verify-crypto-deposit] referral bonus awarded", {
+        depositId: depositTxId,
+        referrerId: result.referrer_id,
+        bonus: result.bonus,
+      });
+    } else if (result && result.reason !== "no_referrer" && result.reason !== "already_awarded") {
+      console.warn("[verify-crypto-deposit] referral bonus skipped", {
+        depositId: depositTxId,
+        reason: result.reason,
+      });
+    }
+
+    return result;
+  } catch (error) {
+    console.error("[verify-crypto-deposit] referral bonus threw", {
+      depositId: depositTxId,
+      message: error instanceof Error ? error.message : String(error),
+    });
+    return null;
+  }
+}
+
 async function handle(request: Request): Promise<Response> {
   if (request.method !== "POST") {
     return json({ ok: false, error: "Method not allowed" }, 405);
@@ -560,6 +624,11 @@ async function handle(request: Request): Promise<Response> {
     return json({ ok: true, status: "already_processed", tx_hash: txHash });
   }
 
+  // The deposit is committed as completed — pay the referrer's 10% bonus now.
+  // It does not depend on plan activation, so a profile problem below cannot
+  // skip it, and a referral problem cannot undo the verified deposit.
+  const referral = await awardReferralBonus(admin, row.id);
+
   if (row.user_id) {
     const planName = normalizePlanName(row.plan_name, body.plan_id);
     const expiresAt = new Date(now.getTime() + PLAN_DAYS * 24 * 60 * 60 * 1000);
@@ -582,6 +651,7 @@ async function handle(request: Request): Promise<Response> {
           status: "completed",
           tx_hash: txHash,
           received: outcome.received,
+          referral,
           warning: "Deposit completed but the profile plan could not be updated",
         },
         200,
@@ -597,6 +667,7 @@ async function handle(request: Request): Promise<Response> {
       received: outcome.received,
       expected: outcome.expected,
       plan_name: normalizePlanName(row.plan_name, body.plan_id),
+      referral,
     },
     200,
   );
