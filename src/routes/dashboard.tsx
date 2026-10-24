@@ -1472,7 +1472,10 @@ function DashboardContent() {
       setInterval(() => {
         const elapsed = (Date.now() - (holdStartTime ?? 0)) / HOLD_SECONDS_MS;
         setHoldProgress(Math.min(elapsed, 1));
-        if (elapsed >= 1) {\n          if (hasSubmitted.current) return;\n        hasSubmitted.current = true;\n        setIsSubmitting(true);
+        if (elapsed >= 1) {
+          if (hasSubmitted.current) return;
+          hasSubmitted.current = true;
+          setIsSubmitting(true);
           cancelHold();
           void submitWithdrawal({
             preventDefault: () => {},
