@@ -40,7 +40,8 @@ vi.mock("@/integrations/supabase/client", () => ({
   },
 }));
 
-const TX_HASH = `0x${"a".repeat(64)}`;
+const TX_HASH = `0x${"A".repeat(64)}`;
+const NORMALIZED_TX_HASH = TX_HASH.toLowerCase();
 
 beforeEach(() => {
   insertMock.mockReset();
@@ -72,14 +73,14 @@ describe("checkout crypto verification handoff", () => {
       amount: 120,
       deposit_amount: 120,
       network: "BEP20",
-      tx_hash: TX_HASH,
+      tx_hash: NORMALIZED_TX_HASH,
       status: "pending",
     });
 
     // The UI never waits for on-chain verification: the form is gone and the
     // global bar (triggered through context) owns the progress UX.
     expect(startVerification).toHaveBeenCalledWith({
-      txHash: TX_HASH,
+      txHash: NORMALIZED_TX_HASH,
       userId: "user-1",
       planName: "Plan 2",
     });

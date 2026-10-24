@@ -41,6 +41,31 @@ CREATE INDEX IF NOT EXISTS transactions_pending_crypto_deposits_idx
   ON public.transactions (created_at)
   WHERE type = 'deposit' AND status = 'pending' AND tx_hash IS NOT NULL;
 
+-- Replay protection: one deposit row per on-chain transaction. Without this a
+-- second user could submit an already-verified hash. Skipped (with a warning)
+-- if duplicate rows already exist, so the migration never fails on live data.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_indexes
+    WHERE schemaname = 'public' AND indexname = 'transactions_deposit_tx_hash_key'
+  ) THEN
+    IF EXISTS (
+      SELECT 1 FROM public.transactions
+      WHERE tx_hash IS NOT NULL AND type = 'deposit'
+      GROUP BY tx_hash
+      HAVING count(*) > 1
+    ) THEN
+      RAISE WARNING
+        'transactions_deposit_tx_hash_key not created: duplicate deposit tx_hash rows exist. Clean them up, then re-run this migration.';
+    ELSE
+      CREATE UNIQUE INDEX transactions_deposit_tx_hash_key
+        ON public.transactions (tx_hash)
+        WHERE tx_hash IS NOT NULL AND type = 'deposit';
+    END IF;
+  END IF;
+END $$;
+
 -- ---------------------------------------------------------------------------
 -- 2) Realtime: UPDATE events on transactions (needed by PaymentVerificationBar)
 -- ---------------------------------------------------------------------------

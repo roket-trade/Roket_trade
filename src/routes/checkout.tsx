@@ -88,7 +88,8 @@ function Checkout() {
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     const parsed = txSchema.safeParse(tx);
-    if (!parsed.success) return setError(parsed.error.issues[0]?.message ?? "Invalid transaction hash");
+    if (!parsed.success)
+      return setError(parsed.error.issues[0]?.message ?? "Invalid transaction hash");
     setError("");
     setBusy(true);
 
@@ -110,6 +111,9 @@ function Checkout() {
       }
 
       const amount = parseFloat(String(plan.deposit));
+      // EVM transaction hashes are case-insensitive; Solana signatures are not.
+      // Normalise BEP20 hashes so the unique index blocks replay attempts.
+      const txHash = net === "BEP20" ? parsed.data.toLowerCase() : parsed.data;
       const payload = {
         user_id: userId,
         type: "deposit",
@@ -118,7 +122,7 @@ function Checkout() {
         deposit_amount: amount,
         network: net,
         wallet_address: address,
-        tx_hash: parsed.data,
+        tx_hash: txHash,
         status: "pending",
       };
       if (!Number.isFinite(payload.amount) || !Number.isFinite(payload.deposit_amount)) {
@@ -153,7 +157,7 @@ function Checkout() {
       // background (pg_cron -> verify-crypto-deposit); the global bar reports
       // the Realtime status change — we never block the UI on it.
       setDone(true);
-      startVerification({ txHash: parsed.data, userId, planName: plan.name });
+      startVerification({ txHash, userId, planName: plan.name });
       toast.success("Payment submitted — verifying on-chain");
     } catch (err) {
       console.error("[checkout] submit failed:", err);
@@ -237,8 +241,12 @@ function Checkout() {
 
               <p className="mt-5 text-sm text-muted-foreground">
                 Send exactly{" "}
-                <span className="font-semibold text-foreground">{money(plan.deposit)}</span> via{" "}
-                {NETWORKS[net].label} to:
+                <span className="font-semibold text-foreground">{money(plan.deposit)}</span> in USDT
+                via {NETWORKS[net].label} to:
+              </p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {net === "BEP20" ? "USDT (BEP20) on BNB Smart Chain" : "USDT (SPL) on Solana"} only
+                — other tokens can&apos;t be verified automatically.
               </p>
               <div className="mt-4 flex justify-center">
                 <div className="rounded-xl bg-foreground p-3">

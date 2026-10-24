@@ -345,6 +345,10 @@ async function handle(request: Request): Promise<Response> {
   const txHash = String(body.tx_hash ?? "").trim();
   if (!txHash) return json({ ok: false, error: "tx_hash is required" }, 400);
 
+  // EVM hashes are case-insensitive; Solana signatures are not.
+  const networkHint = normalizeNetwork(body.network);
+  const initialStateHash = networkHint === "BEP20" ? txHash.toLowerCase() : txHash;
+
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
   const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
   if (!supabaseUrl || !serviceKey) {
@@ -358,28 +362,44 @@ async function handle(request: Request): Promise<Response> {
   // The transaction row is the source of truth for amount, network and user.
   // Request fields are only fallbacks, so a caller cannot claim a smaller plan
   // while sending a smaller amount.
-  const { data: rowData, error: rowError } = await admin
-    .from("transactions")
-    .select(
-      "id,user_id,type,status,amount,deposit_amount,plan_name,network,tx_hash,verification_attempts",
-    )
-    .eq("tx_hash", txHash)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+  const fetchDeposit = (hash: string) =>
+    admin
+      .from("transactions")
+      .select(
+        "id,user_id,type,status,amount,deposit_amount,plan_name,network,tx_hash,verification_attempts",
+      )
+      .eq("tx_hash", hash)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+  let lookupHash = initialStateHash;
+  const firstLookup = await fetchDeposit(lookupHash);
+  let rowData = firstLookup.data as TransactionRow | null;
+  let rowError = firstLookup.error;
+
+  // Retry the lowercase form for mixed-case BEP20 hashes when the caller did
+  // not declare a network (or declared BEP20).
+  if (!rowError && !rowData && networkHint !== "SOL" && txHash !== txHash.toLowerCase()) {
+    lookupHash = txHash.toLowerCase();
+    const retry = await fetchDeposit(lookupHash);
+    rowData = retry.data as TransactionRow | null;
+    rowError = retry.error;
+  }
 
   if (rowError) {
     console.error("[verify-crypto-deposit] transaction lookup failed", rowError);
     return json({ ok: false, error: "Failed to load transaction" }, 500);
   }
 
-  const row = rowData as TransactionRow | null;
+  const row = rowData;
   if (!row) {
     return json(
       { ok: false, status: "not_found", error: "No transaction found for this hash" },
       404,
     );
   }
+  const chainHash = row.tx_hash ?? lookupHash;
   if (row.type !== "deposit") {
     return json({ ok: false, error: "Transaction is not a deposit" }, 400);
   }
@@ -421,8 +441,8 @@ async function handle(request: Request): Promise<Response> {
   try {
     outcome =
       network === "BEP20"
-        ? await verifyBep20(txHash, expectedUsd)
-        : await verifySolana(txHash, expectedUsd);
+        ? await verifyBep20(chainHash, expectedUsd)
+        : await verifySolana(chainHash, expectedUsd);
   } catch (error) {
     // RPC / configuration trouble is not proof of a bad payment: keep the
     // deposit pending so the next cron tick retries it.
