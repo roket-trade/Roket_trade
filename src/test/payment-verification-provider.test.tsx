@@ -15,6 +15,7 @@ const { realtime, invalidateMock } = vi.hoisted(() => ({
     channelName: "",
     removed: 0,
     dbStatus: "pending" as string | null,
+    selectCalls: 0,
   },
 }));
 
@@ -23,11 +24,13 @@ vi.mock("@tanstack/react-router", () => ({
 }));
 
 vi.mock("@/integrations/supabase/client", () => {
-  const maybeSingle = () =>
-    Promise.resolve({
+  const maybeSingle = () => {
+    realtime.selectCalls += 1;
+    return Promise.resolve({
       data: realtime.dbStatus ? { status: realtime.dbStatus } : null,
       error: null,
     });
+  };
 
   const channel = {
     on: (
@@ -46,11 +49,7 @@ vi.mock("@/integrations/supabase/client", () => {
   };
 
   const select = () => ({
-    eq: () => ({
-      eq: () => ({
-        limit: () => ({ maybeSingle }),
-      }),
-    }),
+    eq: () => ({ maybeSingle }),
   });
 
   return {
@@ -103,12 +102,14 @@ beforeEach(() => {
   realtime.channelName = "";
   realtime.removed = 0;
   realtime.dbStatus = "pending";
+  realtime.selectCalls = 0;
   invalidateMock.mockClear();
 });
 
 afterEach(() => {
   cleanup();
   vi.useRealTimers();
+  vi.restoreAllMocks();
 });
 
 describe("PaymentVerificationProvider", () => {
@@ -164,19 +165,51 @@ describe("PaymentVerificationProvider", () => {
     expect(screen.queryByTestId("payment-verification-bar")).toBeNull();
   });
 
-  it("falls back to polling when Realtime does not deliver the update", async () => {
+  it("falls back to polling every 5s and logs the check", async () => {
     vi.useFakeTimers();
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     renderProvider();
 
     start();
     realtime.dbStatus = "completed";
 
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(10_000);
+      await vi.advanceTimersByTimeAsync(5_000);
     });
 
     expect(screen.getByTestId("state").textContent).toBe("success");
     expect(screen.getByText("Payment Verified! Your plan is now active.")).toBeInTheDocument();
+    expect(logSpy).toHaveBeenCalledWith("[Polling] Checking status for", "0xdeadbeef");
+
+    // The interval must stop once a terminal status is seen.
+    const callsAtSuccess = realtime.selectCalls;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10_000);
+    });
+    expect(realtime.selectCalls).toBe(callsAtSuccess);
+  });
+
+  it("shows failed when polling observes a rejected transaction", async () => {
+    vi.useFakeTimers();
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    renderProvider();
+
+    start();
+    realtime.dbStatus = "rejected";
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5_000);
+    });
+
+    expect(screen.getByTestId("state").textContent).toBe("failed");
+    expect(screen.getByText("Verification failed. Please contact support.")).toBeInTheDocument();
+    expect(logSpy).toHaveBeenCalledWith("[Polling] Checking status for", "0xdeadbeef");
+
+    const callsAtFailure = realtime.selectCalls;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10_000);
+    });
+    expect(realtime.selectCalls).toBe(callsAtFailure);
   });
 
   it("unsubscribes when the bar is hidden", () => {

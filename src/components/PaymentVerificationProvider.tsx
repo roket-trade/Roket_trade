@@ -20,8 +20,8 @@ import {
 
 /** How long the success pill stays on screen before hiding itself. */
 export const SUCCESS_VISIBLE_MS = 3000;
-/** Light fallback poll; Realtime is the primary signal. */
-export const VERIFICATION_POLL_MS = 10_000;
+/** Aggressive fallback poll; Realtime is the primary signal. */
+export const VERIFICATION_POLL_MS = 5_000;
 /** Give up on a stuck spinner after 10 minutes and ask the user to contact support. */
 export const VERIFICATION_TIMEOUT_MS = 10 * 60_000;
 
@@ -110,13 +110,32 @@ export function PaymentVerificationProvider({ children }: { children: ReactNode 
 
   const txHash = target?.txHash ?? null;
 
-  // Realtime subscription + light polling while a payment is in flight.
-  // Everything is torn down when the bar hides, the payment resolves, or the
+  // Realtime subscription + aggressive polling fallback while a payment is in
+  // flight. Both are torn down when the bar hides, the payment resolves, or the
   // provider unmounts.
   useEffect(() => {
     if (!txHash || state !== "verifying") return;
 
     let cancelled = false;
+    let poll: number | null = null;
+
+    const stopPolling = () => {
+      if (poll !== null) {
+        window.clearInterval(poll);
+        poll = null;
+      }
+    };
+
+    // The Realtime filter must stay unquoted: tx_hash=eq.<hash>.
+    console.log("[Realtime] Subscribing with filter", `tx_hash=eq.${txHash}`);
+
+    const handleStatus = (status: string | null | undefined) => {
+      if (cancelled) return;
+      if (status !== "completed" && status !== "rejected") return;
+      cancelled = true;
+      stopPolling();
+      applyStatus(status);
+    };
 
     const channel = supabase
       .channel(`payment-verification:${txHash}`)
@@ -129,44 +148,55 @@ export function PaymentVerificationProvider({ children }: { children: ReactNode 
           filter: `tx_hash=eq.${txHash}`,
         },
         (payload) => {
-          if (cancelled) return;
-          const nextStatus = (payload.new as { status?: string } | null)?.status;
-          applyStatus(nextStatus);
+          handleStatus((payload.new as { status?: string } | null)?.status);
         },
       )
       .subscribe((status) => {
+        console.log("[Realtime] Subscription status:", status);
         if (status === "CHANNEL_ERROR") {
-          console.warn("[payment-verification] Realtime channel error; falling back to polling.");
+          console.warn(
+            "[payment-verification] Realtime channel error; polling fallback is active.",
+          );
         }
       });
 
     const checkStatus = async () => {
+      if (cancelled) return;
       const { data, error } = await supabase
         .from("transactions")
         .select("status")
         .eq("tx_hash", txHash)
-        .eq("type", "deposit")
-        .limit(1)
         .maybeSingle();
-      if (cancelled || error || !data) return;
-      applyStatus((data as { status?: string }).status);
+      if (cancelled) return;
+      if (error) {
+        console.warn("[Polling] Status query failed for", txHash, error);
+        return;
+      }
+      if (!data) return;
+      handleStatus((data as { status?: string }).status);
     };
 
-    // A fast chain can confirm before the Realtime channel is joined, so check
-    // once immediately and then poll as a safety net.
-    void checkStatus();
-
-    const poll = window.setInterval(() => {
+    // Aggressive fallback: a Realtime message can be missed while the socket is
+    // still joining, so also check the row every 5 seconds until terminal.
+    poll = window.setInterval(() => {
+      console.log("[Polling] Checking status for", txHash);
       void checkStatus();
     }, VERIFICATION_POLL_MS);
 
+    // A fast chain can confirm before the channel is joined.
+    void checkStatus();
+
     const timeout = window.setTimeout(() => {
-      if (!cancelled && stateRef.current === "verifying") updateState("failed");
+      if (!cancelled && stateRef.current === "verifying") {
+        cancelled = true;
+        stopPolling();
+        updateState("failed");
+      }
     }, VERIFICATION_TIMEOUT_MS);
 
     return () => {
       cancelled = true;
-      window.clearInterval(poll);
+      stopPolling();
       window.clearTimeout(timeout);
       void supabase.removeChannel(channel);
     };
