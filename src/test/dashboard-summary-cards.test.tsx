@@ -168,10 +168,19 @@ describe("Dashboard top summary cards", () => {
     expect(screen.getByText("+$0.15")).toBeInTheDocument();
     expect(screen.getByText("+$12.00")).toBeInTheDocument();
 
-    // Top intro copy and its KYC line were removed; KYC now lives in User Control.
+    // Top intro copy and its KYC line were removed; KYC now lives in the User card.
     expect(screen.queryByText(/Your account is ready/)).toBeNull();
     expect(screen.queryByText(/Member since/)).toBeNull();
-    expect(screen.getByText("KYC Verified")).toBeInTheDocument();
+    const userCard = screen.getByRole("heading", { name: "User" }).closest("section");
+    expect(userCard).not.toBeNull();
+    const kycBadge = within(userCard as HTMLElement).getByText("KYC");
+    expect(kycBadge).toBeInTheDocument();
+    expect(kycBadge.querySelector("svg")).not.toBeNull();
+    const accountBadge = within(userCard as HTMLElement).getByText("Account");
+    expect(kycBadge.parentElement).toBe(accountBadge.parentElement);
+    expect(kycBadge.parentElement?.className).toContain("flex");
+    expect(kycBadge.parentElement?.className).toContain("items-center");
+    expect(kycBadge.parentElement?.className).toContain("gap-2");
 
     // Card 2 — active plan from the latest completed deposit.
     expect(screen.getAllByText("Plan 3").length).toBeGreaterThanOrEqual(1);
@@ -243,13 +252,23 @@ describe("Dashboard top summary cards", () => {
     expect(screen.getByRole("button", { name: "Withdraw" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Set Wallet" })).toBeInTheDocument();
 
-    expect(screen.getByRole("heading", { name: "User Control" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "User" })).toBeInTheDocument();
     expect(screen.getByText("trader@example.com")).toBeInTheDocument();
     expect(screen.getByText("+1 555 010 2030")).toBeInTheDocument();
-    expect(screen.getByText("Plan Summary")).toBeInTheDocument();
+
+    // Plan Summary is collapsed until its header is clicked.
+    const planToggle = screen.getByRole("button", { name: "Plan Summary" });
+    expect(planToggle).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByText("Total Profit")).toBeNull();
+    fireEvent.click(planToggle);
+    expect(planToggle).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByText("Total Profit")).toBeInTheDocument();
     expect(screen.getByText("+$9.50")).toBeInTheDocument();
     expect(screen.getByText("365 Days")).toBeInTheDocument();
+    fireEvent.click(planToggle);
+    expect(planToggle).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByText("Total Profit")).toBeNull();
+
     expect(screen.getByText("Upgrade Plan")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Cancel Plan" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Logout" })).toBeInTheDocument();

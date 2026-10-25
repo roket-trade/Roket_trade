@@ -4,6 +4,8 @@ import type { User } from "@supabase/supabase-js";
 import type { ApexOptions } from "apexcharts";
 import {
   Bell,
+  CheckCircle2,
+  ChevronDown,
   Gift,
   Lock,
   Mail,
@@ -731,23 +733,24 @@ function UserControlCard({
   onCancelPlan: () => void;
   onLogout: () => void;
 }) {
+  const [isPlanOpen, setIsPlanOpen] = useState(false);
+
   return (
     <section className="rounded-2xl border border-gray-800 bg-gray-900/50 p-5 backdrop-blur">
       <div className="flex items-center justify-between gap-3">
-        <h2 className="text-sm font-semibold uppercase tracking-widest text-blue-400">
-          User Control
-        </h2>
-        <div className="flex flex-wrap items-center justify-end gap-1.5">
+        <h2 className="text-sm font-semibold uppercase tracking-widest text-blue-400">User</h2>
+        <div className="flex items-center gap-2">
           <span
             className={
               kycVerified
-                ? "rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-emerald-400"
-                : "rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-amber-400"
+                ? "inline-flex items-center rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-emerald-400 whitespace-nowrap"
+                : "inline-flex items-center rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-amber-400 whitespace-nowrap"
             }
           >
-            {kycVerified ? "KYC Verified" : "KYC Pending"}
+            {kycVerified ? <CheckCircle2 className="h-3 w-3 mr-1" aria-hidden="true" /> : null}
+            KYC
           </span>
-          <span className="rounded-full border border-blue-500/25 bg-blue-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-blue-300">
+          <span className="inline-flex items-center rounded-full border border-blue-500/25 bg-blue-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-blue-300 whitespace-nowrap">
             Account
           </span>
         </div>
@@ -779,31 +782,50 @@ function UserControlCard({
       </dl>
 
       <div className="mt-4 rounded-lg border border-gray-800 bg-gray-950/50 p-3">
-        <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
-          Plan Summary
-        </p>
-        <dl className="mt-2 space-y-1.5 text-[11px]">
-          <div className="flex items-center justify-between gap-2">
-            <dt className="text-muted-foreground">Plan</dt>
-            <dd className="font-semibold text-foreground">{planName ?? "No active plan"}</dd>
-          </div>
-          <div className="flex items-center justify-between gap-2">
-            <dt className="text-muted-foreground">Deposit</dt>
-            <dd className="font-semibold text-foreground">{money(deposit)}</dd>
-          </div>
-          <div className="flex items-center justify-between gap-2">
-            <dt className="text-muted-foreground">Daily Profit</dt>
-            <dd className="font-semibold text-emerald-400">+{money(dailyProfit)}</dd>
-          </div>
-          <div className="flex items-center justify-between gap-2">
-            <dt className="text-muted-foreground">Total Profit</dt>
-            <dd className="font-semibold text-emerald-400">+{money(totalProfit)}</dd>
-          </div>
-          <div className="flex items-center justify-between gap-2">
-            <dt className="text-muted-foreground">Duration</dt>
-            <dd className="font-semibold text-foreground">{duration}</dd>
-          </div>
-        </dl>
+        <button
+          type="button"
+          onClick={() => setIsPlanOpen((open) => !open)}
+          aria-expanded={isPlanOpen}
+          aria-controls="plan-summary-details"
+          className="flex w-full cursor-pointer items-center justify-between gap-2 text-left"
+        >
+          <span className="text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+            Plan Summary
+          </span>
+          <ChevronDown
+            className={`h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform duration-200 ${
+              isPlanOpen ? "rotate-180" : ""
+            }`}
+            aria-hidden="true"
+          />
+        </button>
+        {isPlanOpen && (
+          <dl
+            id="plan-summary-details"
+            className="mt-2 space-y-1.5 text-[11px] animate-in fade-in slide-in-from-top-1 duration-200"
+          >
+            <div className="flex items-center justify-between gap-2">
+              <dt className="text-muted-foreground">Plan</dt>
+              <dd className="font-semibold text-foreground">{planName ?? "No active plan"}</dd>
+            </div>
+            <div className="flex items-center justify-between gap-2">
+              <dt className="text-muted-foreground">Deposit</dt>
+              <dd className="font-semibold text-foreground">{money(deposit)}</dd>
+            </div>
+            <div className="flex items-center justify-between gap-2">
+              <dt className="text-muted-foreground">Daily Profit</dt>
+              <dd className="font-semibold text-emerald-400">+{money(dailyProfit)}</dd>
+            </div>
+            <div className="flex items-center justify-between gap-2">
+              <dt className="text-muted-foreground">Total Profit</dt>
+              <dd className="font-semibold text-emerald-400">+{money(totalProfit)}</dd>
+            </div>
+            <div className="flex items-center justify-between gap-2">
+              <dt className="text-muted-foreground">Duration</dt>
+              <dd className="font-semibold text-foreground">{duration}</dd>
+            </div>
+          </dl>
+        )}
       </div>
 
       <div className="mt-4 space-y-2">
