@@ -73,28 +73,12 @@ function Signup() {
     setBusy(true);
 
     try {
-      let referredBy: string | null = null;
-      if (cleanReferral) {
-        const { data: referrerId, error: referralError } = await supabase.rpc(
-          "resolve_referral_code",
-          { code: cleanReferral },
-        );
-        if (!referralError && typeof referrerId === "string") {
-          referredBy = referrerId;
-        } else if (
-          /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cleanReferral)
-        ) {
-          // Allow a referrer's user ID to be used directly when the lookup RPC
-          // has not been deployed yet.
-          referredBy = cleanReferral;
-        }
-      }
-
       // The profile row is created by the on_auth_user_created trigger
-      // (public.handle_new_user), which reads this metadata: full_name ->
-      // profiles.full_name, and referral_code -> the referrer's id. It only
-      // honors referred_by when it is a UUID, so that key carries the resolved
-      // id rather than the short code.
+      // (public.handle_new_user), which resolves the referral server-side:
+      // `referral_code` is looked up against profiles.referral_code and
+      // `referred_by` is only honored when it is already a UUID. Sending the
+      // raw code in both keys keeps a single lookup on the database and works
+      // even when the optional resolve_referral_code() RPC isn't deployed.
       const { data, error: authError } = await supabase.auth.signUp({
         email: cleanEmail,
         password,
@@ -102,7 +86,7 @@ function Signup() {
           data: {
             full_name: cleanName,
             referral_code: cleanReferral || null,
-            referred_by: referredBy,
+            referred_by: cleanReferral || null,
           },
         },
       });

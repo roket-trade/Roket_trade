@@ -138,6 +138,26 @@ function walletOptions(
     .filter((o) => o.address.trim().length > 0);
 }
 
+/**
+ * Wallets for a profile, normalised to plain strings.
+ *
+ * Accounts created before wallet management only have the legacy single
+ * `default_wallet_address` (a BEP20 address). Fall back to it so those users
+ * still see their address prefilled and can request a withdrawal.
+ */
+function profileWallets(profile: Profile | null): SavedWallets {
+  const stored = (profile?.saved_wallets ?? {}) as SavedWallets;
+  const wallets: SavedWallets = {
+    bep20: String(stored.bep20 ?? "").trim(),
+    solana: String(stored.solana ?? "").trim(),
+    trc20: String(stored.trc20 ?? "").trim(),
+  };
+  const legacy = String(profile?.default_wallet_address ?? "").trim();
+  if (!wallets.bep20 && legacy) wallets.bep20 = legacy;
+  return wallets;
+}
+
+
 /** Sum every completed deposit for the user (their total placed capital). */
 function sumDeposits(
   rows: Array<{ deposit_amount?: number | string | null }> | null,
@@ -1343,8 +1363,17 @@ function DashboardContent() {
     ? Math.min(PLAN_TOTAL_DAYS, Math.max(1, Math.floor((Date.now() - planStartedMs) / DAY_MS) + 1))
     : 0;
   const planProgressPct = (planDaysPassed / PLAN_TOTAL_DAYS) * 100;
+  // Saved wallets plus the legacy single-address fallback, so the withdraw card,
+  // the wallet modal and the withdrawal flow all agree on the same addresses.
+  const wallets = profileWallets(profile);
+  const preferredWalletType = ((profile?.default_wallet_type ?? "bep20") as WalletType) ?? "bep20";
   const walletAddress =
-    profile?.default_wallet_address || summary.latestWithdraw?.wallet_address || null;
+    wallets[preferredWalletType] ||
+    wallets.bep20 ||
+    wallets.solana ||
+    wallets.trc20 ||
+    summary.latestWithdraw?.wallet_address ||
+    null;
 
   // Strict dual-ad gate: the reward unlocks only when the 15 second timer has
   // elapsed AND the Hilltop video ad reported that it played to the end.
@@ -1367,9 +1396,7 @@ function DashboardContent() {
     setWithdrawAmount("");
     setConfirmOpen(false);
 
-    const wallets = profile?.saved_wallets as SavedWallets | undefined;
-    const defaultType =
-      ((profile?.default_wallet_type ?? "bep20") as WalletType) ?? "bep20";
+    const defaultType = preferredWalletType;
     const options = walletOptions(wallets);
     const defaultOption =
       options.find((o) => o.type === defaultType) ?? options[0] ?? null;
@@ -1469,15 +1496,12 @@ function DashboardContent() {
   }, [withdrawalSuccess]);
 
   const openWalletManagement = () => {
-    const wallets = profile?.saved_wallets as SavedWallets | undefined;
     setSavedWallets({
-      bep20: String(wallets?.bep20 ?? ""),
-      solana: String(wallets?.solana ?? ""),
-      trc20: String(wallets?.trc20 ?? ""),
+      bep20: String(wallets.bep20 ?? ""),
+      solana: String(wallets.solana ?? ""),
+      trc20: String(wallets.trc20 ?? ""),
     });
-    setDefaultWalletType(
-      ((profile?.default_wallet_type ?? "bep20") as WalletType) ?? "bep20",
-    );
+    setDefaultWalletType(preferredWalletType);
     setWalletManagementOpen(true);
   };
 
@@ -2094,7 +2118,10 @@ function DashboardContent() {
                   return (
                     <div key={type} className="flex items-center gap-3 border-b border-border pb-2 last:border-0">
                       <div className="flex-1 space-y-1">
-                        <label className="text-sm font-medium text-muted-foreground">
+                        <label
+                          htmlFor={`wallet-${type}`}
+                          className="text-sm font-medium text-muted-foreground"
+                        >
                           {WALLET_LABELS[type]} Address
                         </label>
                         <input
@@ -2208,23 +2235,18 @@ function DashboardContent() {
                   ) : (
                     <span className="text-sm text-amber-500">No saved wallets</span>
                   )}
-                  {walletOptions(profile?.saved_wallets as SavedWallets | undefined).length > 1 && (
+                  {walletOptions(wallets).length > 1 && (
                     <select
                       value={selectedWallet?.type ?? ""}
                       onChange={(e) => {
                         const type = e.target.value as WalletType;
-                        const addr =
-                          (profile?.saved_wallets as SavedWallets | undefined)?.[
-                            type
-                          ] ?? "";
+                        const addr = wallets[type] ?? "";
                         setSelectedWallet({ type, address: addr });
                       }}
                       className="rounded-lg border bg-muted px-4 py-3 text-sm outline-none focus:border-primary"
                       disabled={withdrawalBusy || isSubmitting}
                     >
-                      {walletOptions(
-                        profile?.saved_wallets as SavedWallets | undefined,
-                      ).map((o) => (
+                      {walletOptions(wallets).map((o) => (
                         <option key={o.type} value={o.type}>
                           {WALLET_LABELS[o.type]}
                         </option>

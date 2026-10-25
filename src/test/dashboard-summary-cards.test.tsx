@@ -283,15 +283,22 @@ describe("Dashboard top summary cards", () => {
       "mailto:info@roket.bond",
     );
 
-    // Set Wallet opens the modal prefilled and saves through Supabase.
+    // "Set Wallet" opens the wallet-management modal. It is prefilled from the
+    // legacy single default address and saves every network plus the default.
     fireEvent.click(screen.getByRole("button", { name: "Set Wallet" }));
-    const walletDialog = screen.getByRole("dialog", { name: "Set Wallet" });
+    const walletDialog = screen.getByRole("dialog", { name: "Saved Wallets" });
     expect(walletDialog).toBeInTheDocument();
-    const walletField = screen.getByLabelText("Default Wallet Address");
-    expect(walletField).toHaveValue("0x35aec7E35F65ea227e49fDd321709D52Ada389E4");
-    fireEvent.change(walletField, { target: { value: "0xnewWalletAddress" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save Wallet" }));
-    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Set Wallet" })).toBeNull());
+    const bep20Field = within(walletDialog).getByLabelText("BEP20 Address");
+    expect(bep20Field).toHaveValue("0x35aec7E35F65ea227e49fDd321709D52Ada389E4");
+    fireEvent.change(bep20Field, { target: { value: "0xnewWalletAddress" } });
+    fireEvent.click(within(walletDialog).getByRole("button", { name: "Save Wallets" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Saved Wallets" })).toBeNull());
+
+    // The saved address is also what the withdrawal flow targets, so a legacy
+    // default_wallet_address keeps withdrawals working.
+    fireEvent.click(screen.getByRole("button", { name: "Withdraw" }));
+    const withdrawDialog = screen.getByRole("dialog", { name: "Request Withdrawal" });
+    expect(within(withdrawDialog).getByText("0xne...ress (BEP20)")).toBeInTheDocument();
 
     // Dark glassmorphism styling + responsive 3-column grid.
     const grid = container.querySelector(".mt-8.grid");
