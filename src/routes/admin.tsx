@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useState, type MouseEvent } from "react";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { toast } from "sonner";
+import { Loader2 } from "lucide-react";
+
 import { RequireAdmin } from "@/components/RequireAdmin";
 import { supabase } from "@/integrations/supabase/client";
 import type { TablesUpdate } from "@/integrations/supabase/types";
@@ -65,6 +67,16 @@ type SupportTicket = {
 };
 
 type Tab = "deposits" | "users" | "withdrawals" | "kyc" | "support";
+
+type SupportMessage = {
+  id: string;
+  ticket_id: string;
+  sender_id: string | null;
+  message: string;
+  created_at: string;
+};
+
+
 
 // Money EARNED per user, aggregated from transactions — deposits are never part
 // of these figures. `adjustment` is the manual correction an admin can make
@@ -392,8 +404,11 @@ function AdminContent() {
 
   // Support ticket reply modal.
   const [replyTicket, setReplyTicket] = useState<SupportTicket | null>(null);
+  const [replyMessages, setReplyMessages] = useState<SupportMessage[]>([]);
+  const [replyMessagesLoading, setReplyMessagesLoading] = useState(false);
   const [replyDraft, setReplyDraft] = useState("");
   const [replyBusy, setReplyBusy] = useState(false);
+  const [resolveBusy, setResolveBusy] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -711,30 +726,70 @@ function AdminContent() {
 
   const openReplyModal = (ticket: SupportTicket) => {
     setReplyTicket(ticket);
-    setReplyDraft(ticket.admin_reply ?? "");
+    setReplyDraft("");
+    setReplyMessages([]);
+    void fetchTicketMessages(ticket.id);
   };
 
-  const sendReplyAndResolve = async () => {
+  const fetchTicketMessages = async (ticketId: string) => {
+    setReplyMessagesLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from("support_messages")
+        .select("*")
+        .eq("ticket_id", ticketId)
+        .order("created_at", { ascending: true });
+      if (error) throw error;
+      setReplyMessages((data ?? []) as SupportMessage[]);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't load messages.");
+    } finally {
+      setReplyMessagesLoading(false);
+    }
+  };
+
+  const sendAdminMessage = async () => {
     if (!replyTicket) return;
+    const m = replyDraft.trim();
+    if (!m) return;
     setReplyBusy(true);
+    try {
+      const senderId = await assertAdmin();
+      const { error } = await supabase.from("support_messages").insert({
+        ticket_id: replyTicket.id,
+        sender_id: senderId,
+        message: m,
+      });
+      if (error) throw error;
+      setReplyDraft("");
+      await fetchTicketMessages(replyTicket.id);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't send message.");
+    } finally {
+      setReplyBusy(false);
+    }
+  };
+
+  const markResolved = async () => {
+    if (!replyTicket) return;
+    setResolveBusy(true);
     try {
       const { error } = await supabase
         .from("support_tickets")
-        .update({ admin_reply: replyDraft, status: "resolved" })
+        .update({ status: "resolved" })
         .eq("id", replyTicket.id);
       if (error) throw error;
       setSupportTickets((prev) =>
         prev.map((t) =>
-          t.id === replyTicket.id ? { ...t, admin_reply: replyDraft, status: "resolved" } : t,
+          t.id === replyTicket.id ? { ...t, status: "resolved" } : t,
         ),
       );
-      toast.success("Reply sent and ticket resolved.");
-      setReplyTicket(null);
-      setReplyDraft("");
+      setReplyTicket({ ...replyTicket, status: "resolved" });
+      toast.success("Ticket marked as resolved.");
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Couldn't send reply.");
+      toast.error(err instanceof Error ? err.message : "Couldn't resolve ticket.");
     } finally {
-      setReplyBusy(false);
+      setResolveBusy(false);
     }
   };
   const deleteUser = async (user: AdminUser) => {
@@ -1290,10 +1345,33 @@ const openPlanModal = (user: AdminUser) => {
             </div>
           </div>
         )}
-        {replyTicket && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4" role="dialog" aria-modal="true" aria-labelledby="reply-modal-title">
-            <div className="w-full max-w-2xl rounded-2xl border bg-card p-6 shadow-xl">
-              <h2 id="reply-modal-title" className="font-display text-xl font-bold">View & Reply Ticket</h2>
+                {replyTicket && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="reply-modal-title"
+            onClick={() => {
+              setReplyTicket(null);
+              setReplyDraft("");
+            }}
+          >
+            <div
+              className="relative flex h-[80vh] w-full max-w-2xl flex-col overflow-y-auto rounded-2xl border bg-card p-6 shadow-xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <button
+                type="button"
+                onClick={() => {
+                  setReplyTicket(null);
+                  setReplyDraft("");
+                }}
+                className="absolute right-4 top-4 rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+                aria-label="Close"
+              >
+                ✕
+              </button>
+              <h2 id="reply-modal-title" className="font-display text-xl font-bold">Ticket Chat</h2>
               <div className="mt-3 space-y-2 text-sm">
                 <p><span className="font-semibold">User:</span> {replyTicket.user_id ? (emails[replyTicket.user_id] ?? short(replyTicket.user_id, 10)) : "—"}</p>
                 <p><span className="font-semibold">Category:</span> {replyTicket.category ?? "general"}</p>
@@ -1320,26 +1398,65 @@ const openPlanModal = (user: AdminUser) => {
                   </div>
                 )}
               </div>
-              <div className="mt-4 space-y-1.5">
-                <label htmlFor="admin-reply" className="text-sm font-medium">Admin Reply</label>
+
+              <div className="mt-4 flex-1 space-y-3 overflow-y-auto rounded-lg border bg-muted/30 p-3">
+                {replyMessagesLoading ? (
+                  <div className="flex items-center justify-center py-6 text-muted-foreground">
+                    <Loader2 className="h-5 w-5 animate-spin" />
+                  </div>
+                ) : replyMessages.length === 0 ? (
+                  <div className="py-6 text-center text-sm text-muted-foreground">No messages yet.</div>
+                ) : (
+                  replyMessages.map((msg) => {
+                    const isAdmin = msg.sender_id !== replyTicket.user_id;
+                    return (
+                      <div key={msg.id} className={`flex ${isAdmin ? "justify-end" : "justify-start"}`}>
+                        <div className={`max-w-[80%] rounded-lg px-3 py-2 text-sm ${isAdmin ? "bg-brand text-primary-foreground" : "bg-background border"}`}>
+                          <div className="whitespace-pre-wrap">{msg.message}</div>
+                          <div className={`mt-1 text-[10px] ${isAdmin ? "text-primary-foreground/70" : "text-muted-foreground"}`}>
+                            {new Date(msg.created_at).toLocaleString()}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+
+              <div className="mt-4 space-y-2">
                 <textarea
                   id="admin-reply"
                   value={replyDraft}
                   onChange={(e) => setReplyDraft(e.target.value)}
-                  rows={5}
+                  rows={3}
                   className="w-full rounded-lg border border-border bg-muted/70 px-4 py-3 text-sm text-foreground outline-none transition-colors focus:border-primary focus:ring-2 focus:ring-primary/20"
-                  placeholder="Type your reply..."
+                  placeholder="Type a message..."
                 />
-              </div>
-              <div className="mt-6 flex justify-end gap-2">
-                <button type="button" onClick={() => { setReplyTicket(null); setReplyDraft(""); }} className="rounded-lg border border-border px-4 py-2 text-sm font-semibold text-muted-foreground hover:text-foreground">Close</button>
-                <button type="button" disabled={replyBusy} onClick={() => void sendReplyAndResolve()} className="rounded-lg bg-brand px-4 py-2 text-sm font-bold text-primary-foreground shadow-glow disabled:opacity-50">
-                  {replyBusy ? "…" : "Send Reply & Resolve"}
-                </button>
+                <div className="flex justify-end gap-2">
+                  <button
+                    type="button"
+                    disabled={replyBusy || !replyDraft.trim()}
+                    onClick={() => void sendAdminMessage()}
+                    className="rounded-lg bg-brand px-4 py-2 text-sm font-bold text-primary-foreground shadow-glow disabled:opacity-50"
+                  >
+                    {replyBusy ? "…" : "Send Message"}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={resolveBusy || replyTicket.status?.toLowerCase() === "resolved"}
+                    onClick={() => void markResolved()}
+                    className="rounded-lg border border-emerald-500/40 px-4 py-2 text-sm font-semibold text-emerald-600 hover:bg-emerald-500/10 disabled:opacity-50"
+                  >
+                    {resolveBusy ? "…" : "Mark as Resolved"}
+                  </button>
+                </div>
               </div>
             </div>
           </div>
-        )}      </main>
+        )}
+
+      </main>
+
     </div>
   );
 }

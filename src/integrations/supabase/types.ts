@@ -161,9 +161,33 @@ export type Database = {
         }
         Relationships: []
       }
+      support_messages: {
+        Row: {
+          created_at: string
+          id: string
+          message: string
+          sender_id: string | null
+          ticket_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          message: string
+          sender_id?: string | null
+          ticket_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          message?: string
+          sender_id?: string | null
+          ticket_id?: string
+        }
+        Relationships: []
+      }
+
       transactions: {
         Row: {
-          amount: number
           created_at: string
           deposit_amount: number | null
           description: string | null

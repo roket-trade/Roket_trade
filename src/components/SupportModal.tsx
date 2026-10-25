@@ -21,6 +21,14 @@ type TicketRow = {
   image_url: string | null;
 };
 
+type SupportMessage = {
+  id: string;
+  ticket_id: string;
+  sender_id: string | null;
+  message: string;
+  created_at: string;
+};
+
 type Props = {
   open?: boolean;
   isOpen?: boolean;
@@ -28,6 +36,7 @@ type Props = {
   onClose?: () => void;
   userId?: string;
 };
+
 
 export function SupportModal({ open, isOpen, onOpenChange, onClose, userId }: Props) {
   const visible = open ?? isOpen ?? false;
@@ -48,6 +57,12 @@ export function SupportModal({ open, isOpen, onOpenChange, onClose, userId }: Pr
   const [tickets, setTickets] = useState<TicketRow[]>([]);
   const [loadingTickets, setLoadingTickets] = useState(false);
 
+  const [selectedTicket, setSelectedTicket] = useState<TicketRow | null>(null);
+  const [ticketMessages, setTicketMessages] = useState<SupportMessage[]>([]);
+  const [messagesLoading, setMessagesLoading] = useState(false);
+  const [replyDraft, setReplyDraft] = useState("");
+  const [sendingReply, setSendingReply] = useState(false);
+
   const fetchTickets = async () => {
     if (!uid) return;
     setLoadingTickets(true);
@@ -66,9 +81,59 @@ export function SupportModal({ open, isOpen, onOpenChange, onClose, userId }: Pr
     }
   };
 
+  const fetchTicketMessages = async (ticketId: string) => {
+    setMessagesLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from("support_messages")
+        .select("*")
+        .eq("ticket_id", ticketId)
+        .order("created_at", { ascending: true });
+      if (error) throw error;
+      setTicketMessages((data ?? []) as SupportMessage[]);
+    } catch (e: any) {
+      toast.error("Failed to load messages", { description: e?.message ?? "Unknown error" });
+    } finally {
+      setMessagesLoading(false);
+    }
+  };
+
+  const openTicketChat = (ticket: TicketRow) => {
+    setSelectedTicket(ticket);
+    setReplyDraft("");
+    setTicketMessages([]);
+    fetchTicketMessages(ticket.id);
+  };
+
+  const sendReply = async () => {
+    if (!selectedTicket || !uid) return;
+    const m = replyDraft.trim();
+    if (!m) return;
+    setSendingReply(true);
+    try {
+      const { error } = await supabase.from("support_messages").insert({
+        ticket_id: selectedTicket.id,
+        sender_id: uid,
+        message: m,
+      });
+      if (error) throw error;
+      setReplyDraft("");
+      await fetchTicketMessages(selectedTicket.id);
+    } catch (e: any) {
+      toast.error("Failed to send reply", { description: e?.message ?? "Unknown error" });
+    } finally {
+      setSendingReply(false);
+    }
+  };
+
   useEffect(() => {
     if (visible && uid) {
       fetchTickets();
+    }
+    if (!visible) {
+      setSelectedTicket(null);
+      setTicketMessages([]);
+      setReplyDraft("");
     }
   }, [visible, uid]);
 
@@ -207,7 +272,7 @@ export function SupportModal({ open, isOpen, onOpenChange, onClose, userId }: Pr
           </form>
         )}
 
-        {tab === "mine" && (
+                {tab === "mine" && !selectedTicket && (
           <div className="space-y-3 pt-2 max-h-[60vh] overflow-auto">
             {loadingTickets ? (
               <div className="flex items-center justify-center py-8 text-muted-foreground">
@@ -219,23 +284,22 @@ export function SupportModal({ open, isOpen, onOpenChange, onClose, userId }: Pr
               </div>
             ) : (
               tickets.map((t) => (
-                <div key={t.id} className="rounded-lg border p-3 space-y-2">
+                <button
+                  key={t.id}
+                  type="button"
+                  onClick={() => openTicketChat(t)}
+                  className="w-full rounded-lg border p-3 space-y-2 text-left hover:bg-muted/50 transition"
+                >
                   <div className="flex items-start justify-between gap-2">
                     <div className="font-medium">{t.subject}</div>
                     {statusBadge(t.status)}
                   </div>
-                  <div className="text-sm text-muted-foreground whitespace-pre-wrap">{t.message}</div>
-                  {t.admin_reply && (
-                    <div className="rounded-md bg-muted p-2 text-sm">
-                      <div className="mb-1 text-xs font-semibold text-muted-foreground">Admin response</div>
-                      <div className="whitespace-pre-wrap">{t.admin_reply}</div>
-                    </div>
-                  )}
+                  <div className="text-sm text-muted-foreground whitespace-pre-wrap line-clamp-2">{t.message}</div>
                   <div className="text-xs text-muted-foreground">
                     {new Date(t.created_at).toLocaleString()}
                     {t.resolved_at && ` · Resolved ${new Date(t.resolved_at).toLocaleString()}`}
                   </div>
-                </div>
+                </button>
               ))
             )}
             <div className="flex justify-end">
@@ -245,6 +309,59 @@ export function SupportModal({ open, isOpen, onOpenChange, onClose, userId }: Pr
             </div>
           </div>
         )}
+
+        {tab === "mine" && selectedTicket && (
+          <div className="flex flex-col gap-3 pt-2 max-h-[60vh]">
+            <div className="flex items-center justify-between">
+              <Button variant="ghost" size="sm" onClick={() => setSelectedTicket(null)}>
+                ← Back
+              </Button>
+              <div className="text-sm font-medium">{selectedTicket.subject}</div>
+              {statusBadge(selectedTicket.status)}
+            </div>
+            <div className="flex-1 space-y-3 overflow-y-auto rounded-lg border bg-muted/30 p-3 min-h-[200px]">
+              <div className="flex justify-start">
+                <div className="max-w-[80%] rounded-lg bg-background border px-3 py-2 text-sm">
+                  <div className="whitespace-pre-wrap">{selectedTicket.message}</div>
+                  <div className="mt-1 text-[10px] text-muted-foreground">
+                    {new Date(selectedTicket.created_at).toLocaleString()}
+                  </div>
+                </div>
+              </div>
+              {messagesLoading ? (
+                <div className="flex items-center justify-center py-6 text-muted-foreground">
+                  <Loader2 className="h-5 w-5 animate-spin" />
+                </div>
+              ) : (
+                ticketMessages.map((msg) => {
+                  const isUser = msg.sender_id === uid;
+                  return (
+                    <div key={msg.id} className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
+                      <div className={`max-w-[80%] rounded-lg px-3 py-2 text-sm ${isUser ? "bg-primary text-primary-foreground" : "bg-background border"}`}>
+                        <div className="whitespace-pre-wrap">{msg.message}</div>
+                        <div className={`mt-1 text-[10px] ${isUser ? "text-primary-foreground/70" : "text-muted-foreground"}`}>
+                          {new Date(msg.created_at).toLocaleString()}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+            <div className="flex gap-2">
+              <Textarea
+                value={replyDraft}
+                onChange={(e) => setReplyDraft(e.target.value)}
+                placeholder="Type a reply..."
+                rows={2}
+              />
+              <Button onClick={() => void sendReply()} disabled={sendingReply || !replyDraft.trim()} className="self-end">
+                {sendingReply ? <Loader2 className="h-4 w-4 animate-spin" /> : "Send"}
+              </Button>
+            </div>
+          </div>
+        )}
+
       </DialogContent>
     </Dialog>
   );
