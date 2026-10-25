@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { toast } from "sonner";
 import { AuthShell } from "@/components/AuthShell";
 import { supabase } from "@/integrations/supabase/client";
 
@@ -27,6 +28,8 @@ export const Route = createFileRoute("/login")({
 const input =
   "w-full rounded-lg border border-border bg-muted/70 px-4 py-3 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20";
 
+const SUSPENDED_MESSAGE = "Your account has been suspended. Please contact support.";
+
 function Login() {
   const search = Route.useSearch();
   const navigate = useNavigate();
@@ -40,7 +43,7 @@ function Login() {
     setError("");
     setBusy(true);
 
-    const { error: authError } = await supabase.auth.signInWithPassword({
+    const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
       email: email.trim(),
       password,
     });
@@ -49,6 +52,32 @@ function Login() {
       setBusy(false);
       setError(authError.message);
       return;
+    }
+
+    // A successful password check is not enough: held accounts must be signed
+    // straight back out. Tolerate databases that have not run the
+    // is_suspended migration yet (the select errors, login continues).
+    const signedInId = authData.user?.id;
+    if (signedInId) {
+      const { data: profile, error: profileError } = await supabase
+        .from("profiles")
+        .select("is_suspended")
+        .eq("id", signedInId)
+        .maybeSingle();
+      if (profileError) {
+        console.error(
+          "[login] profile suspension check failed:",
+          profileError.code,
+          profileError.message,
+        );
+      }
+      if ((profile as { is_suspended?: boolean } | null)?.is_suspended === true) {
+        await supabase.auth.signOut();
+        setBusy(false);
+        setError(SUSPENDED_MESSAGE);
+        toast.error(SUSPENDED_MESSAGE);
+        return;
+      }
     }
 
     // Sanitize redirect: default to /dashboard if missing, /login, or /login?...

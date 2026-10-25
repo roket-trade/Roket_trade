@@ -61,6 +61,7 @@ export type Database = {
           id: string
           id_card_url: string | null
           is_admin: boolean
+          is_suspended: boolean
           kyc_status: string | null
           last_withdraw_at: string | null
           main_balance: number | null
@@ -82,6 +83,7 @@ export type Database = {
           id: string
           id_card_url?: string | null
           is_admin?: boolean
+          is_suspended?: boolean
           kyc_status?: string | null
           last_withdraw_at?: string | null
           main_balance?: number | null
@@ -103,6 +105,7 @@ export type Database = {
           id?: string
           id_card_url?: string | null
           is_admin?: boolean
+          is_suspended?: boolean
           kyc_status?: string | null
           last_withdraw_at?: string | null
           main_balance?: number | null

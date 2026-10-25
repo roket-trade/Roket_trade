@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { toast } from "sonner";
 import { RequireAdmin } from "@/components/RequireAdmin";
@@ -36,9 +36,76 @@ type KycUser = {
   created_at: string;
 };
 
-type Tab = "deposits" | "withdrawals" | "kyc";
+type AdminUser = {
+  id: string;
+  full_name: string | null;
+  main_balance: number | null;
+  extra_balance: number | null;
+  kyc_status: string | null;
+  plan_name: string | null;
+  plan_started_at: string | null;
+  plan_expires_at: string | null;
+  is_admin: boolean;
+  is_suspended: boolean;
+  last_withdraw_at: string | null;
+  created_at: string;
+};
+
+type Tab = "deposits" | "users" | "withdrawals" | "kyc";
+
+const USER_COLS =
+  "id,full_name,main_balance,extra_balance,kyc_status,plan_name,plan_started_at,plan_expires_at,is_admin,last_withdraw_at,created_at";
+const PLANS = ["Plan 1", "Plan 2", "Plan 3", "Plan 4"] as const;
+const KYC_STATUSES = ["unverified", "pending", "verified", "rejected"] as const;
+
 const money = (n: number) => Number(n ?? 0).toLocaleString("en-US", { style: "currency", currency: "USD" });
 const short = (s: string | null, n = 18) => (!s ? "—" : s.length > n ? `${s.slice(0, n)}…` : s);
+const round2 = (n: number) => Math.round(n * 100) / 100;
+
+// PostgREST reports a select on an unknown column as 42703 (and an unknown
+// column in a mutation payload as PGRST204). Tolerating both lets the panel
+// keep working before the is_suspended migration has run.
+const isMissingSuspendedColumn = (err: { code?: string; message?: string } | null) =>
+  Boolean(err) && /is_suspended/i.test(err?.message ?? "");
+
+async function fetchAdminUsers(): Promise<AdminUser[]> {
+  const withFlag = await supabase
+    .from("profiles")
+    .select(`${USER_COLS},is_suspended`)
+    .order("created_at", { ascending: false });
+  if (!withFlag.error) return (withFlag.data ?? []) as unknown as AdminUser[];
+  if (!isMissingSuspendedColumn(withFlag.error)) throw withFlag.error;
+
+  const withoutFlag = await supabase
+    .from("profiles")
+    .select(USER_COLS)
+    .order("created_at", { ascending: false });
+  if (withoutFlag.error) throw withoutFlag.error;
+  return ((withoutFlag.data ?? []) as unknown as Omit<AdminUser, "is_suspended">[]).map((u) => ({
+    ...u,
+    is_suspended: false,
+  }));
+}
+
+// Every mutating action re-checks is_admin against the signed-in session, so
+// the buttons cannot be driven by a non-admin (RLS enforces it server-side
+// too, see the add_is_admin migration).
+async function assertAdmin(): Promise<string> {
+  const { data: auth, error: authErr } = await supabase.auth.getUser();
+  if (authErr) throw authErr;
+  const userId = auth.user?.id;
+  if (!userId) throw new Error("You must be signed in as an admin.");
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("is_admin")
+    .eq("id", userId)
+    .maybeSingle();
+  if (error) throw error;
+  if ((data as { is_admin?: boolean } | null)?.is_admin !== true) {
+    throw new Error("Only admins can perform this action.");
+  }
+  return userId;
+}
 function Admin() {
   return (
     <RequireAdmin>
@@ -53,9 +120,16 @@ function AdminContent() {
   const [deposits, setDeposits] = useState<Tx[]>([]);
   const [withdrawals, setWithdrawals] = useState<Tx[]>([]);
   const [kycUsers, setKycUsers] = useState<KycUser[]>([]);
+  const [users, setUsers] = useState<AdminUser[]>([]);
   const [emails, setEmails] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [busyUserId, setBusyUserId] = useState<string | null>(null);
+  const [userSearch, setUserSearch] = useState("");
+  const [planUser, setPlanUser] = useState<AdminUser | null>(null);
+  const [planPick, setPlanPick] = useState<string>("none");
+  const [editUser, setEditUser] = useState<AdminUser | null>(null);
+  const [editDraft, setEditDraft] = useState({ main: "0", extra: "0", isAdmin: false, kyc: "unverified" });
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -65,10 +139,11 @@ function AdminContent() {
       // auth.users afterwards through the admin_user_emails() RPC.
       const txCols =
         "id,user_id,type,amount,deposit_amount,plan_name,network,wallet_address,tx_hash,status,created_at";
-      const [dep, wd, kyc] = await Promise.all([
+      const [dep, wd, kyc, userRows] = await Promise.all([
         supabase.from("transactions").select(txCols).eq("type", "deposit").eq("status", "pending").order("created_at"),
         supabase.from("transactions").select(txCols).eq("type", "withdrawal").eq("status", "pending").order("created_at"),
         supabase.from("profiles").select("id,full_name,kyc_status,id_card_url,created_at").eq("kyc_status", "pending").order("created_at"),
+        fetchAdminUsers(),
       ]);
       if (dep.error) {
         console.error("[admin] deposits fetch error:", dep.error.code, dep.error.message, dep.error.details, dep.error.hint);
@@ -88,14 +163,17 @@ function AdminContent() {
       setDeposits(deps);
       setWithdrawals(wds);
       setKycUsers(kycRows);
+      setUsers(userRows);
 
-      // One RPC call covers every row on the page (deposits, withdrawals and
-      // KYC), so the panel needs a single extra round-trip and no per-row query.
+      // One RPC call covers every row on the page (deposits, withdrawals, KYC
+      // and the users table), so the panel needs a single extra round-trip and
+      // no per-row query.
       const ids = [
         ...new Set(
           [...deps, ...wds]
             .map((tx) => tx.user_id)
             .concat(kycRows.map((u) => u.id))
+            .concat(userRows.map((u) => u.id))
             .filter((id): id is string => Boolean(id)),
         ),
       ];
@@ -267,6 +345,7 @@ function AdminContent() {
       const { error } = await supabase.from("profiles").update({ kyc_status: status }).eq("id", userId);
       if (error) throw error;
       setKycUsers((u) => u.filter((x) => x.id !== userId));
+      setUsers((list) => list.map((u) => (u.id === userId ? { ...u, kyc_status: status } : u)));
       toast.success(`KYC ${status}.`);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Couldn't update KYC.");
@@ -275,11 +354,153 @@ function AdminContent() {
     }
   };
 
+  const patchUser = (id: string, patch: Partial<AdminUser>) => {
+    setUsers((list) => list.map((u) => (u.id === id ? { ...u, ...patch } : u)));
+  };
+
+  const label = (user: AdminUser) => emails[user.id] ?? (user.full_name || short(user.id, 10));
+
+  const resetWithdrawLimit = async (user: AdminUser) => {
+    setBusyUserId(user.id);
+    try {
+      await assertAdmin();
+      const { error } = await supabase
+        .from("profiles")
+        .update({ last_withdraw_at: null })
+        .eq("id", user.id);
+      if (error) throw error;
+      patchUser(user.id, { last_withdraw_at: null });
+      toast.success(`Withdraw limit reset for ${label(user)}.`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't reset the withdraw limit.");
+    } finally {
+      setBusyUserId(null);
+    }
+  };
+
+  const sendPasswordReset = async (user: AdminUser) => {
+    setBusyUserId(user.id);
+    try {
+      await assertAdmin();
+      const email = emails[user.id];
+      if (!email) throw new Error("No email address on file for this user.");
+      const { error } = await supabase.auth.resetPasswordForEmail(email);
+      if (error) throw error;
+      toast.success(`Password reset email sent to ${email}.`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't send the reset email.");
+    } finally {
+      setBusyUserId(null);
+    }
+  };
+
+  const toggleSuspend = async (user: AdminUser) => {
+    setBusyUserId(user.id);
+    try {
+      const adminId = await assertAdmin();
+      if (user.id === adminId) throw new Error("You can't hold your own account.");
+      const next = !user.is_suspended;
+      const { error } = await supabase.from("profiles").update({ is_suspended: next }).eq("id", user.id);
+      if (error) throw error;
+      patchUser(user.id, { is_suspended: next });
+      toast.success(next ? `${label(user)} held.` : `${label(user)} released.`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't change the account status.");
+    } finally {
+      setBusyUserId(null);
+    }
+  };
+
+  const openPlanModal = (user: AdminUser) => {
+    const current = user.plan_name ?? "none";
+    setPlanPick((PLANS as readonly string[]).includes(current) ? current : "none");
+    setPlanUser(user);
+  };
+
+  const savePlan = async (mode: "update" | "cancel") => {
+    if (!planUser) return;
+    const target = planUser;
+    setBusyUserId(target.id);
+    try {
+      await assertAdmin();
+      const planName = mode === "cancel" || planPick === "none" ? null : planPick;
+      const now = new Date();
+      const patch = planName
+        ? {
+            plan_name: planName,
+            plan_started_at: now.toISOString(),
+            plan_expires_at: new Date(now.getTime() + 365 * 24 * 60 * 60 * 1000).toISOString(),
+          }
+        : { plan_name: null, plan_started_at: null, plan_expires_at: null };
+      const { error } = await supabase.from("profiles").update(patch).eq("id", target.id);
+      if (error) throw error;
+      patchUser(target.id, patch);
+      setPlanUser(null);
+      toast.success(planName ? `Plan updated to ${planName}.` : "Plan cancelled.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't update the plan.");
+    } finally {
+      setBusyUserId(null);
+    }
+  };
+
+  const openEditModal = (user: AdminUser) => {
+    setEditDraft({
+      main: String(user.main_balance ?? 0),
+      extra: String(user.extra_balance ?? 0),
+      isAdmin: user.is_admin === true,
+      kyc: user.kyc_status ?? "unverified",
+    });
+    setEditUser(user);
+  };
+
+  const saveEdits = async () => {
+    if (!editUser) return;
+    const target = editUser;
+    setBusyUserId(target.id);
+    try {
+      const main = Number(editDraft.main);
+      const extra = Number(editDraft.extra);
+      if (!Number.isFinite(main) || main < 0) throw new Error("Main balance must be a number 0 or greater.");
+      if (!Number.isFinite(extra) || extra < 0) throw new Error("Extra balance must be a number 0 or greater.");
+      const adminId = await assertAdmin();
+      if (target.id === adminId && !editDraft.isAdmin) {
+        throw new Error("You can't remove your own admin access.");
+      }
+      const patch = {
+        main_balance: round2(main),
+        extra_balance: round2(extra),
+        is_admin: editDraft.isAdmin,
+        kyc_status: editDraft.kyc,
+      };
+      const { error } = await supabase.from("profiles").update(patch).eq("id", target.id);
+      if (error) throw error;
+      patchUser(target.id, patch);
+      setEditUser(null);
+      toast.success(`Saved changes for ${label(target)}.`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't save the changes.");
+    } finally {
+      setBusyUserId(null);
+    }
+  };
+
   const tabs: { id: Tab; label: string; count: number }[] = [
     { id: "deposits", label: "Pending Deposits", count: deposits.length },
+    { id: "users", label: "Users", count: users.length },
     { id: "withdrawals", label: "Pending Withdrawals", count: withdrawals.length },
     { id: "kyc", label: "KYC Verifications", count: kycUsers.length },
   ];
+
+  const filteredUsers = useMemo(() => {
+    const q = userSearch.trim().toLowerCase();
+    if (!q) return users;
+    return users.filter((u) => {
+      const email = (emails[u.id] ?? "").toLowerCase();
+      const name = (u.full_name ?? "").toLowerCase();
+      return email.includes(q) || name.includes(q);
+    });
+  }, [users, emails, userSearch]);
 
   return (
     <div className="min-h-screen bg-background">
@@ -296,7 +517,7 @@ function AdminContent() {
       <main className="mx-auto max-w-6xl px-4 py-10">
         <p className="text-xs font-semibold uppercase tracking-[0.25em] text-primary">Admin Panel</p>
         <h1 className="mt-2 font-display text-4xl font-bold">Manage the platform</h1>
-        <p className="mt-2 text-sm text-muted-foreground">Approve deposits (pays 10% referral bonus), review withdrawals, verify KYC.</p>
+        <p className="mt-2 text-sm text-muted-foreground">Approve deposits (pays 10% referral bonus), review withdrawals, verify KYC, and manage user accounts.</p>
         <div className="mt-6 flex flex-wrap gap-2">
           {tabs.map((t) => (
             <button key={t.id} type="button" onClick={() => setTab(t.id)}
@@ -332,6 +553,69 @@ function AdminContent() {
                 ))}
               </tbody>
             </table></div>
+          </section>
+        )}
+        {tab === "users" && (
+          <section className="space-y-4">
+            <div className="flex flex-wrap items-center gap-3">
+              <input
+                type="search"
+                value={userSearch}
+                onChange={(e) => setUserSearch(e.target.value)}
+                placeholder="Search by email or name…"
+                aria-label="Search users by email or name"
+                className="w-full max-w-sm rounded-lg border border-border bg-muted/70 px-4 py-2.5 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20"
+              />
+              <span className="text-xs text-muted-foreground">
+                {filteredUsers.length} of {users.length} users
+              </span>
+            </div>
+            <div className="overflow-hidden rounded-2xl border bg-card">
+              <div className="overflow-x-auto"><table className="w-full min-w-[1080px] text-left text-sm">
+                <thead><tr className="border-b border-border/70 text-xs uppercase tracking-widest text-muted-foreground">
+                  <th className="px-4 py-3">Email</th><th className="px-4 py-3">Name</th><th className="px-4 py-3">Main Balance</th>
+                  <th className="px-4 py-3">Extra Balance</th><th className="px-4 py-3">KYC Status</th><th className="px-4 py-3">Plan Name</th>
+                  <th className="px-4 py-3">Account Status</th><th className="px-4 py-3 text-right">Actions</th>
+                </tr></thead>
+                <tbody>
+                  {filteredUsers.length === 0 && (<tr><td colSpan={8} className="px-4 py-10 text-center text-muted-foreground">{users.length === 0 ? "No users yet." : "No users match that search."}</td></tr>)}
+                  {filteredUsers.map((u) => (
+                    <tr key={u.id} className="border-b border-border/40 last:border-0">
+                      <td className="px-4 py-3 font-medium">{emails[u.id] ?? short(u.id, 10)}</td>
+                      <td className="px-4 py-3">{u.full_name || "—"}</td>
+                      <td className="px-4 py-3 font-semibold text-primary">{money(Number(u.main_balance ?? 0))}</td>
+                      <td className="px-4 py-3">{money(Number(u.extra_balance ?? 0))}</td>
+                      <td className="px-4 py-3">
+                        <span className={u.kyc_status === "verified"
+                          ? "rounded-full bg-emerald-500/15 px-2.5 py-1 text-xs font-semibold text-emerald-400"
+                          : u.kyc_status === "rejected"
+                            ? "rounded-full bg-destructive/15 px-2.5 py-1 text-xs font-semibold text-destructive"
+                            : "rounded-full bg-muted px-2.5 py-1 text-xs font-semibold text-muted-foreground"}>
+                          {u.kyc_status ?? "unverified"}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3">{u.plan_name ?? "None"}</td>
+                      <td className="px-4 py-3">
+                        <span className={u.is_suspended
+                          ? "rounded-full bg-destructive/15 px-2.5 py-1 text-xs font-semibold text-destructive"
+                          : "rounded-full bg-emerald-500/15 px-2.5 py-1 text-xs font-semibold text-emerald-400"}>
+                          {u.is_suspended ? "Held" : "Active"}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex flex-wrap justify-end gap-2">
+                          <button type="button" disabled={busyUserId === u.id} onClick={() => void resetWithdrawLimit(u)} className="rounded-lg border border-border px-3 py-1.5 text-xs font-bold text-muted-foreground hover:border-primary hover:text-primary disabled:opacity-50">Reset Withdraw Limit</button>
+                          <button type="button" disabled={busyUserId === u.id} onClick={() => void sendPasswordReset(u)} className="rounded-lg border border-border px-3 py-1.5 text-xs font-bold text-muted-foreground hover:border-primary hover:text-primary disabled:opacity-50">Send Reset Password</button>
+                          <button type="button" disabled={busyUserId === u.id} onClick={() => void toggleSuspend(u)} className={u.is_suspended ? "rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-emerald-500 disabled:opacity-50" : "rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-amber-500 disabled:opacity-50"}>{u.is_suspended ? "Unhold Account" : "Hold Account"}</button>
+                          <button type="button" disabled={busyUserId === u.id} onClick={() => openPlanModal(u)} className="rounded-lg bg-primary/15 px-3 py-1.5 text-xs font-bold text-primary hover:bg-primary/25 disabled:opacity-50">Manage Plan</button>
+                          <button type="button" disabled={busyUserId === u.id} onClick={() => openEditModal(u)} className="rounded-lg border border-primary/40 px-3 py-1.5 text-xs font-bold text-primary hover:bg-primary/10 disabled:opacity-50">Edit Balances &amp; KYC</button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table></div>
+            </div>
           </section>
         )}
         {tab === "withdrawals" && (
@@ -381,6 +665,57 @@ function AdminContent() {
           </section>
         )}
         </div>
+        )}
+        {planUser && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4" role="dialog" aria-modal="true" aria-labelledby="plan-modal-title">
+            <div className="w-full max-w-md rounded-2xl border bg-card p-6 shadow-xl">
+              <h2 id="plan-modal-title" className="font-display text-xl font-bold">Manage plan</h2>
+              <p className="mt-1 text-sm text-muted-foreground">{label(planUser)}</p>
+              <label htmlFor="plan-select" className="mt-5 block text-sm font-medium">Plan</label>
+              <select id="plan-select" value={planPick} onChange={(e) => setPlanPick(e.target.value)} className="mt-1.5 w-full rounded-lg border border-border bg-muted/70 px-4 py-3 text-sm text-foreground outline-none transition-colors focus:border-primary focus:ring-2 focus:ring-primary/20">
+                <option value="none">None</option>
+                {PLANS.map((p) => (<option key={p} value={p}>{p}</option>))}
+              </select>
+              <p className="mt-2 text-xs text-muted-foreground">Update Plan starts a fresh 365-day window from now. Cancel Plan clears the plan and its dates.</p>
+              <div className="mt-6 flex flex-wrap justify-end gap-2">
+                <button type="button" onClick={() => setPlanUser(null)} className="rounded-lg border border-border px-4 py-2 text-sm font-semibold text-muted-foreground hover:text-foreground">Close</button>
+                <button type="button" disabled={busyUserId === planUser.id} onClick={() => void savePlan("cancel")} className="rounded-lg bg-destructive/90 px-4 py-2 text-sm font-bold text-white hover:bg-destructive disabled:opacity-50">Cancel Plan</button>
+                <button type="button" disabled={busyUserId === planUser.id} onClick={() => void savePlan("update")} className="rounded-lg bg-brand px-4 py-2 text-sm font-bold text-primary-foreground shadow-glow disabled:opacity-50">Update Plan</button>
+              </div>
+            </div>
+          </div>
+        )}
+        {editUser && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4" role="dialog" aria-modal="true" aria-labelledby="edit-modal-title">
+            <div className="w-full max-w-md rounded-2xl border bg-card p-6 shadow-xl">
+              <h2 id="edit-modal-title" className="font-display text-xl font-bold">Edit balances &amp; KYC</h2>
+              <p className="mt-1 text-sm text-muted-foreground">{label(editUser)}</p>
+              <div className="mt-5 grid gap-4 sm:grid-cols-2">
+                <div className="space-y-1.5">
+                  <label htmlFor="edit-main" className="text-sm font-medium">Main balance</label>
+                  <input id="edit-main" type="number" min="0" step="0.01" value={editDraft.main} onChange={(e) => setEditDraft((d) => ({ ...d, main: e.target.value }))} className="w-full rounded-lg border border-border bg-muted/70 px-4 py-3 text-sm text-foreground outline-none transition-colors focus:border-primary focus:ring-2 focus:ring-primary/20" />
+                </div>
+                <div className="space-y-1.5">
+                  <label htmlFor="edit-extra" className="text-sm font-medium">Extra balance</label>
+                  <input id="edit-extra" type="number" min="0" step="0.01" value={editDraft.extra} onChange={(e) => setEditDraft((d) => ({ ...d, extra: e.target.value }))} className="w-full rounded-lg border border-border bg-muted/70 px-4 py-3 text-sm text-foreground outline-none transition-colors focus:border-primary focus:ring-2 focus:ring-primary/20" />
+                </div>
+              </div>
+              <div className="mt-4 space-y-1.5">
+                <label htmlFor="edit-kyc" className="text-sm font-medium">KYC status</label>
+                <select id="edit-kyc" value={editDraft.kyc} onChange={(e) => setEditDraft((d) => ({ ...d, kyc: e.target.value }))} className="w-full rounded-lg border border-border bg-muted/70 px-4 py-3 text-sm text-foreground outline-none transition-colors focus:border-primary focus:ring-2 focus:ring-primary/20">
+                  {KYC_STATUSES.map((s) => (<option key={s} value={s}>{s}</option>))}
+                </select>
+              </div>
+              <label className="mt-4 flex items-center gap-2 text-sm font-medium">
+                <input type="checkbox" checked={editDraft.isAdmin} onChange={(e) => setEditDraft((d) => ({ ...d, isAdmin: e.target.checked }))} className="h-4 w-4 rounded border-border" />
+                Admin access (is_admin)
+              </label>
+              <div className="mt-6 flex justify-end gap-2">
+                <button type="button" onClick={() => setEditUser(null)} className="rounded-lg border border-border px-4 py-2 text-sm font-semibold text-muted-foreground hover:text-foreground">Close</button>
+                <button type="button" disabled={busyUserId === editUser.id} onClick={() => void saveEdits()} className="rounded-lg bg-brand px-4 py-2 text-sm font-bold text-primary-foreground shadow-glow disabled:opacity-50">Save changes</button>
+              </div>
+            </div>
+          </div>
         )}
       </main>
     </div>
