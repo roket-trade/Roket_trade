@@ -5,7 +5,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { useToast } from "@/hooks/use-toast";
+import { toast } from "sonner";
 import { Loader2, Plus, Ticket, Clock, CheckCircle2, MessageSquare } from "lucide-react";
 
 type TicketRow = {
@@ -34,7 +34,6 @@ export function SupportModal({ open, isOpen, onOpenChange, onClose, userId }: Pr
     if (!v) onClose?.();
   };
   const { user } = useAuth();
-  const { toast } = useToast();
   const uid = userId ?? user?.id;
 
   const [tab, setTab] = useState<"new" | "mine">("new");
@@ -57,7 +56,7 @@ export function SupportModal({ open, isOpen, onOpenChange, onClose, userId }: Pr
       if (error) throw error;
       setTickets((data ?? []) as TicketRow[]);
     } catch (e: any) {
-      toast({ title: "Failed to load tickets", description: e?.message ?? "Unknown error", variant: "destructive" });
+      toast.error("Failed to load tickets", { description: e?.message ?? "Unknown error" });
     } finally {
       setLoadingTickets(false);
     }
@@ -72,13 +71,13 @@ export function SupportModal({ open, isOpen, onOpenChange, onClose, userId }: Pr
   const submitTicket = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!uid) {
-      toast({ title: "Not signed in", description: "Please sign in to submit a ticket.", variant: "destructive" });
+      toast.error("Not signed in", { description: "Please sign in to submit a ticket." });
       return;
     }
     const s = subject.trim();
     const m = message.trim();
     if (!s || !m) {
-      toast({ title: "Missing fields", description: "Subject and message are required.", variant: "destructive" });
+      toast.error("Missing fields", { description: "Subject and message are required." });
       return;
     }
     setSubmitting(true);
@@ -90,13 +89,13 @@ export function SupportModal({ open, isOpen, onOpenChange, onClose, userId }: Pr
         status: "open",
       });
       if (error) throw error;
-      toast({ title: "Ticket submitted", description: "We will get back to you soon." });
+      toast.success("Ticket submitted", { description: "We will get back to you soon." });
       setSubject("");
       setMessage("");
       setTab("mine");
       fetchTickets();
     } catch (e: any) {
-      toast({ title: "Submission failed", description: e?.message ?? "Unknown error", variant: "destructive" });
+      toast.error("Submission failed", { description: e?.message ?? "Unknown error" });
     } finally {
       setSubmitting(false);
     }

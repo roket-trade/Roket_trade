@@ -1670,7 +1670,7 @@ function DashboardContent() {
       )}
       {profile?.is_suspended && (
         <AccountSuspendedOverlay
-          open
+          isSuspended
           onSignOut={() => void signOut()}
           onContactSupport={() => setSupportOpen(true)}
         />
