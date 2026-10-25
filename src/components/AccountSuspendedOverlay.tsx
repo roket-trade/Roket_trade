@@ -21,7 +21,7 @@ export function AccountSuspendedOverlay({
       role="dialog"
       aria-modal="true"
       aria-labelledby="account-suspended-title"
-      className="fixed inset-0 z-[60] flex items-center justify-center bg-background/60 backdrop-blur-md p-4"
+      className="fixed inset-0 z-[9999] flex items-center justify-center bg-background/60 backdrop-blur-md p-4"
     >
       <div className="w-full max-w-md rounded-2xl border border-border/60 bg-card/70 p-6 text-center shadow-2xl backdrop-blur-xl">
         <h2 id="account-suspended-title" className="font-display text-xl font-bold text-destructive">

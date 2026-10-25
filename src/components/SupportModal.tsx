@@ -17,6 +17,8 @@ type TicketRow = {
   admin_response: string | null;
   created_at: string;
   resolved_at: string | null;
+  category: string | null;
+  image_url: string | null;
 };
 
 type Props = {
@@ -39,6 +41,8 @@ export function SupportModal({ open, isOpen, onOpenChange, onClose, userId }: Pr
   const [tab, setTab] = useState<"new" | "mine">("new");
   const [subject, setSubject] = useState("");
   const [message, setMessage] = useState("");
+  const [category, setCategory] = useState("general");
+  const [imageUrl, setImageUrl] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
   const [tickets, setTickets] = useState<TicketRow[]>([]);
@@ -87,11 +91,15 @@ export function SupportModal({ open, isOpen, onOpenChange, onClose, userId }: Pr
         subject: s,
         message: m,
         status: "open",
+         category,
+         image_url: imageUrl.trim() || null,
       });
       if (error) throw error;
       toast.success("Ticket submitted", { description: "We will get back to you soon." });
       setSubject("");
       setMessage("");
+       setCategory("general");
+       setImageUrl("");
       setTab("mine");
       fetchTickets();
     } catch (e: any) {
@@ -126,7 +134,7 @@ export function SupportModal({ open, isOpen, onOpenChange, onClose, userId }: Pr
 
   return (
     <Dialog open={visible} onOpenChange={setOpen}>
-      <DialogContent className="max-w-2xl">
+      <DialogContent className="z-[10000] max-w-2xl">
         <DialogHeader>
           <DialogTitle>Support</DialogTitle>
           <DialogDescription>Submit a new ticket or review your existing ones.</DialogDescription>
@@ -158,6 +166,27 @@ export function SupportModal({ open, isOpen, onOpenChange, onClose, userId }: Pr
                 onChange={(e) => setSubject(e.target.value)}
                 placeholder="Briefly describe your issue"
                 maxLength={120}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium">Category</label>
+              <select
+                value={category}
+                onChange={(e) => setCategory(e.target.value)}
+                className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+              >
+                <option value="general">General</option>
+                <option value="billing">Billing</option>
+                <option value="technical">Technical</option>
+                <option value="account">Account</option>
+              </select>
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium">Image URL (optional)</label>
+              <Input
+                value={imageUrl}
+                onChange={(e) => setImageUrl(e.target.value)}
+                placeholder="https://..."
               />
             </div>
             <div className="space-y-1.5">

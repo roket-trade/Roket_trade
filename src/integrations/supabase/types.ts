@@ -125,8 +125,10 @@ export type Database = {
       support_tickets: {
         Row: {
           admin_response: string | null
+          category: string | null
           created_at: string
           id: string
+          image_url: string | null
           message: string
           resolved_at: string | null
           status: string
@@ -135,8 +137,10 @@ export type Database = {
         }
         Insert: {
           admin_response?: string | null
+          category?: string | null
           created_at?: string
           id?: string
+          image_url?: string | null
           message: string
           resolved_at?: string | null
           status?: string
@@ -145,8 +149,10 @@ export type Database = {
         }
         Update: {
           admin_response?: string | null
+          category?: string | null
           created_at?: string
           id?: string
+          image_url?: string | null
           message?: string
           resolved_at?: string | null
           status?: string

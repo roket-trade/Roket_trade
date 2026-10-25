@@ -16,6 +16,8 @@ CREATE TABLE IF NOT EXISTS public.support_tickets (
   message text NOT NULL,
   status text NOT NULL DEFAULT 'open',
   admin_response text,
+  category text NOT NULL DEFAULT 'general',
+  image_url text,
   created_at timestamptz NOT NULL DEFAULT now(),
   resolved_at timestamptz
 );

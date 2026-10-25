@@ -60,6 +60,8 @@ type SupportTicket = {
   status: string;
   created_at: string;
   admin_response?: string | null;
+  category?: string | null;
+  image_url?: string | null;
 };
 
 type Tab = "deposits" | "users" | "withdrawals" | "kyc" | "support";
@@ -1124,15 +1126,17 @@ const openPlanModal = (user: AdminUser) => {
           <section className="overflow-hidden rounded-2xl border bg-card">
             <div className="overflow-x-auto"><table className="w-full min-w-[680px] text-left text-sm">
               <thead><tr className="border-b border-border/70 text-xs uppercase tracking-widest text-muted-foreground">
-                <th className="px-4 py-3">User</th><th className="px-4 py-3">Subject</th><th className="px-4 py-3">Message</th><th className="px-4 py-3">Status</th><th className="px-4 py-3 text-right">Actions</th>
+                <th className="px-4 py-3">User</th><th className="px-4 py-3">Category</th><th className="px-4 py-3">Subject</th><th className="px-4 py-3">Message</th><th className="px-4 py-3">Image</th><th className="px-4 py-3">Status</th><th className="px-4 py-3 text-right">Actions</th>
               </tr></thead>
               <tbody>
-                {supportTickets.length === 0 && (<tr><td colSpan={5} className="px-4 py-10 text-center text-muted-foreground">No support tickets.</td></tr>)}
+                {supportTickets.length === 0 && (<tr><td colSpan={7} className="px-4 py-10 text-center text-muted-foreground">No support tickets.</td></tr>)}
                 {supportTickets.map((t) => (
                   <tr key={t.id} className="border-b border-border/40 last:border-0">
                     <td className="px-4 py-3 font-medium">{t.user_id ? (emails[t.user_id] ?? short(t.user_id, 10)) : "—"}</td>
+                    <td className="px-4 py-3">{t.category ?? "general"}</td>
                     <td className="px-4 py-3">{t.subject}</td>
                     <td className="px-4 py-3 max-w-xs truncate">{t.message}</td>
+                    <td className="px-4 py-3">{t.image_url ? <a href={t.image_url} target="_blank" rel="noreferrer" className="text-primary underline">View</a> : "—"}</td>
                     <td className="px-4 py-3">{t.status}</td>
                     <td className="px-4 py-3"><div className="flex justify-end gap-2">
                       <button type="button" disabled={t.status === "resolved"} onClick={() => void resolveTicket(t.id)} className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-emerald-500 disabled:opacity-50">Resolve</button>

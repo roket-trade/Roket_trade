@@ -54,12 +54,12 @@ function Login() {
       return;
     }
 
-    // A successful password check is not enough: held accounts must be signed
-    // straight back out. Tolerate databases that have not run the
-    // is_suspended migration yet (the select errors, login continues).
+    // Suspended users may still sign in; the AccountSuspendedOverlay blocks the
+    // dashboard. Keep the profile probe (tolerating databases that have not
+    // run the is_suspended migration yet) so login never crashes.
     const signedInId = authData.user?.id;
     if (signedInId) {
-      const { data: profile, error: profileError } = await supabase
+      const { error: profileError } = await supabase
         .from("profiles")
         .select("is_suspended")
         .eq("id", signedInId)
@@ -71,13 +71,9 @@ function Login() {
           profileError.message,
         );
       }
-      if ((profile as { is_suspended?: boolean } | null)?.is_suspended === true) {
-        await supabase.auth.signOut();
-        setBusy(false);
-        setError(SUSPENDED_MESSAGE);
-        toast.error(SUSPENDED_MESSAGE);
-        return;
-      }
+      // Suspended users are allowed to sign in; the AccountSuspendedOverlay
+      // blocks the UI on the dashboard. They may only sign out via the
+      // overlay's "Sign out" button.
     }
 
     // Sanitize redirect: default to /dashboard if missing, /login, or /login?...

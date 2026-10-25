@@ -34,8 +34,6 @@ import { Route } from "@/routes/login";
 
 const Login = (Route.options as unknown as { component: () => React.ReactElement }).component;
 
-const SUSPENDED = "Your account has been suspended. Please contact support.";
-
 function profileQuery(result: { data: unknown; error: unknown }) {
   const builder = {
     select: () => builder,
@@ -58,19 +56,20 @@ describe("Login suspension check", () => {
     mocks.signOut.mockResolvedValue({ error: null });
   });
 
-  it("signs a suspended user straight back out and explains why", async () => {
+  it("lets a suspended user sign in and routes to the dashboard", async () => {
     mocks.signIn.mockResolvedValue({ data: { user: { id: "user-1" } }, error: null });
     mocks.from.mockReturnValue(profileQuery({ data: { is_suspended: true }, error: null }));
 
     render(<Login />);
     submitLogin();
 
-    await waitFor(() => expect(mocks.signOut).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(mocks.navigate).toHaveBeenCalledWith({ to: "/dashboard", replace: true }),
+    );
 
     expect(mocks.from).toHaveBeenCalledWith("profiles");
-    expect(mocks.navigate).not.toHaveBeenCalled();
-    expect(toast.error).toHaveBeenCalledWith(SUSPENDED);
-    expect(await screen.findByText(SUSPENDED)).toBeInTheDocument();
+    expect(mocks.signOut).not.toHaveBeenCalled();
+    expect(toast.error).not.toHaveBeenCalled();
   });
 
   it("lets an active user through to the dashboard", async () => {
