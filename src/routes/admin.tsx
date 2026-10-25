@@ -390,6 +390,11 @@ function AdminContent() {
   const [txLoading, setTxLoading] = useState(false);
   const [txError, setTxError] = useState<string | null>(null);
 
+  // Support ticket reply modal.
+  const [replyTicket, setReplyTicket] = useState<SupportTicket | null>(null);
+  const [replyDraft, setReplyDraft] = useState("");
+  const [replyBusy, setReplyBusy] = useState(false);
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
@@ -704,14 +709,32 @@ function AdminContent() {
     }
   };
 
-  const resolveTicket = async (id: string) => {
+  const openReplyModal = (ticket: SupportTicket) => {
+    setReplyTicket(ticket);
+    setReplyDraft(ticket.admin_response ?? "");
+  };
+
+  const sendReplyAndResolve = async () => {
+    if (!replyTicket) return;
+    setReplyBusy(true);
     try {
-      const { error } = await supabase.from("support_tickets").update({ status: "resolved" }).eq("id", id);
+      const { error } = await supabase
+        .from("support_tickets")
+        .update({ admin_response: replyDraft, status: "resolved" })
+        .eq("id", replyTicket.id);
       if (error) throw error;
-      setSupportTickets((prev) => prev.map((t) => (t.id === id ? { ...t, status: "resolved" } : t)));
-      toast.success("Ticket resolved.");
+      setSupportTickets((prev) =>
+        prev.map((t) =>
+          t.id === replyTicket.id ? { ...t, admin_response: replyDraft, status: "resolved" } : t,
+        ),
+      );
+      toast.success("Reply sent and ticket resolved.");
+      setReplyTicket(null);
+      setReplyDraft("");
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Couldn't resolve ticket.");
+      toast.error(err instanceof Error ? err.message : "Couldn't send reply.");
+    } finally {
+      setReplyBusy(false);
     }
   };
   const deleteUser = async (user: AdminUser) => {
@@ -1139,7 +1162,7 @@ const openPlanModal = (user: AdminUser) => {
                     <td className="px-4 py-3">{t.image_url ? <a href={t.image_url} target="_blank" rel="noreferrer" className="text-primary underline">View</a> : "—"}</td>
                     <td className="px-4 py-3">{t.status}</td>
                     <td className="px-4 py-3"><div className="flex justify-end gap-2">
-                      <button type="button" disabled={t.status === "resolved"} onClick={() => void resolveTicket(t.id)} className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-emerald-500 disabled:opacity-50">Resolve</button>
+                      <button type="button" onClick={() => openReplyModal(t)} className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-emerald-500">View & Reply</button>
                     </div></td>
                   </tr>
                 ))}
@@ -1267,7 +1290,56 @@ const openPlanModal = (user: AdminUser) => {
             </div>
           </div>
         )}
-      </main>
+        {replyTicket && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4" role="dialog" aria-modal="true" aria-labelledby="reply-modal-title">
+            <div className="w-full max-w-2xl rounded-2xl border bg-card p-6 shadow-xl">
+              <h2 id="reply-modal-title" className="font-display text-xl font-bold">View & Reply Ticket</h2>
+              <div className="mt-3 space-y-2 text-sm">
+                <p><span className="font-semibold">User:</span> {replyTicket.user_id ? (emails[replyTicket.user_id] ?? short(replyTicket.user_id, 10)) : "—"}</p>
+                <p><span className="font-semibold">Category:</span> {replyTicket.category ?? "general"}</p>
+                <div>
+                  <span className="font-semibold">Status:</span>{" "}
+                  <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${replyTicket.status?.toLowerCase() === "resolved" ? "bg-emerald-500/15 text-emerald-600" : "bg-sky-500/15 text-sky-600"}`}>
+                    {replyTicket.status || "open"}
+                  </span>
+                </div>
+                <div>
+                  <div className="font-semibold">Subject</div>
+                  <div className="whitespace-pre-wrap text-muted-foreground">{replyTicket.subject}</div>
+                </div>
+                <div>
+                  <div className="font-semibold">Message</div>
+                  <div className="whitespace-pre-wrap text-muted-foreground">{replyTicket.message}</div>
+                </div>
+                {replyTicket.image_url && (
+                  <div>
+                    <div className="font-semibold">Attached Image</div>
+                    <a href={replyTicket.image_url} target="_blank" rel="noreferrer">
+                      <img src={replyTicket.image_url} alt="Ticket attachment" className="mt-1 max-h-64 rounded-lg border object-contain" />
+                    </a>
+                  </div>
+                )}
+              </div>
+              <div className="mt-4 space-y-1.5">
+                <label htmlFor="admin-reply" className="text-sm font-medium">Admin Reply</label>
+                <textarea
+                  id="admin-reply"
+                  value={replyDraft}
+                  onChange={(e) => setReplyDraft(e.target.value)}
+                  rows={5}
+                  className="w-full rounded-lg border border-border bg-muted/70 px-4 py-3 text-sm text-foreground outline-none transition-colors focus:border-primary focus:ring-2 focus:ring-primary/20"
+                  placeholder="Type your reply..."
+                />
+              </div>
+              <div className="mt-6 flex justify-end gap-2">
+                <button type="button" onClick={() => { setReplyTicket(null); setReplyDraft(""); }} className="rounded-lg border border-border px-4 py-2 text-sm font-semibold text-muted-foreground hover:text-foreground">Close</button>
+                <button type="button" disabled={replyBusy} onClick={() => void sendReplyAndResolve()} className="rounded-lg bg-brand px-4 py-2 text-sm font-bold text-primary-foreground shadow-glow disabled:opacity-50">
+                  {replyBusy ? "…" : "Send Reply & Resolve"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}      </main>
     </div>
   );
 }
