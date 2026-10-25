@@ -281,12 +281,7 @@ describe("Dashboard top summary cards", () => {
     // Footer notification + help boxes.
     const notification = screen.getByRole("heading", { name: "Notification" }).closest("section");
     expect(notification?.className).toContain("border-l-blue-500");
-    expect(
-      screen.getByText("System maintenance scheduled for Oct 25, 02:00 UTC"),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText("Referral bonus increased to 10% for a limited time!"),
-    ).toBeInTheDocument();
+    expect(screen.getByText("No new notifications.")).toBeInTheDocument();
 
     const help = screen.getByRole("heading", { name: "Need Help?" }).closest("section");
     expect(help?.className).toContain("border-l-rose-500");

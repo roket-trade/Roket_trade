@@ -68,6 +68,15 @@ type ReferralBonusRow = {
   referred_user_id?: string | null;
 };
 
+type Announcement = {
+  id: string;
+  title: string;
+  message: string;
+  type: string;
+  is_active: boolean;
+  created_at: string;
+};
+
 type ActivePlan = {
   plan_name: string | null;
   amount: number;
@@ -888,6 +897,7 @@ function DashboardContent() {
   const [adEarnings, setAdEarnings] = useState<AdEarning[]>([]);
   const [referrals, setReferrals] = useState<ReferralMember[]>([]);
   const [recentWithdrawals, setRecentWithdrawals] = useState<RecentWithdrawal[]>([]);
+  const [announcements, setAnnouncements] = useState<Announcement[]>([]);
   const [summary, setSummary] = useState<DashboardSummary>(EMPTY_SUMMARY);
   const [platformStats, setPlatformStats] = useState<PlatformStats>(EMPTY_PLATFORM_STATS);
   const [withdrawalOpen, setWithdrawalOpen] = useState(false);
@@ -1203,6 +1213,27 @@ function DashboardContent() {
   // signed-in user's transaction history and regenerate on each dashboard load.
   useEffect(() => {
     setPlatformStats(createPlatformStats());
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      const { data, error } = await supabase
+        .from("announcements")
+        .select("id,title,message,type,is_active,created_at")
+        .eq("is_active", true)
+        .order("created_at", { ascending: false })
+        .limit(5);
+      if (!active) return;
+      if (error) {
+        console.error("[dashboard] announcements fetch failed", error);
+        return;
+      }
+      setAnnouncements((data ?? []) as Announcement[]);
+    })();
+    return () => {
+      active = false;
+    };
   }, []);
 
   const signOut = async () => {
@@ -1905,35 +1936,34 @@ function DashboardContent() {
                   <h2 className="text-sm font-semibold text-white">Notification</h2>
                 </div>
                 <div className="mt-3 h-24 overflow-y-auto rounded bg-gray-950/50 p-3">
-                  <ul className="space-y-3">
-                    <li className="flex items-start gap-2.5 text-xs">
-                      <Bell
-                        className="mt-0.5 h-3.5 w-3.5 shrink-0 text-blue-400"
-                        aria-hidden="true"
-                      />
-                      <span className="text-muted-foreground">
-                        System maintenance scheduled for Oct 25, 02:00 UTC
-                      </span>
-                    </li>
-                    <li className="flex items-start gap-2.5 text-xs">
-                      <Gift
-                        className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-400"
-                        aria-hidden="true"
-                      />
-                      <span className="text-muted-foreground">
-                        Referral bonus increased to 10% for a limited time!
-                      </span>
-                    </li>
-                    <li className="flex items-start gap-2.5 text-xs">
-                      <Bell
-                        className="mt-0.5 h-3.5 w-3.5 shrink-0 text-blue-400"
-                        aria-hidden="true"
-                      />
-                      <span className="text-muted-foreground">
-                        Daily plan profits are distributed at 00:00 UTC.
-                      </span>
-                    </li>
-                  </ul>
+                  {announcements.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">No new notifications.</p>
+                  ) : (
+                    <ul className="space-y-3">
+                      {announcements.map((a) => {
+                        const isWarning = a.type === "warning";
+                        const isSuccess = a.type === "success";
+                        const iconColor = isWarning
+                          ? "text-yellow-400"
+                          : isSuccess
+                            ? "text-emerald-400"
+                            : "text-blue-400";
+                        const Icon = isWarning ? Bell : isSuccess ? Gift : Bell;
+                        return (
+                          <li key={a.id} className="flex items-start gap-2.5 text-xs">
+                            <Icon
+                              className={`mt-0.5 h-3.5 w-3.5 shrink-0 ${iconColor}`}
+                              aria-hidden="true"
+                            />
+                            <div>
+                              <span className="font-semibold text-white">{a.title}: </span>
+                              <span className="text-muted-foreground">{a.message}</span>
+                            </div>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
                 </div>
               </section>
 

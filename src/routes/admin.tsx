@@ -66,13 +66,22 @@ type SupportTicket = {
   image_url?: string | null;
 };
 
-type Tab = "deposits" | "users" | "withdrawals" | "kyc" | "support";
+type Tab = "deposits" | "users" | "withdrawals" | "kyc" | "support" | "announcements";
 
 type SupportMessage = {
   id: string;
   ticket_id: string;
   sender_id: string | null;
   message: string;
+  created_at: string;
+};
+
+type Announcement = {
+  id: string;
+  title: string;
+  message: string;
+  type: string;
+  is_active: boolean;
   created_at: string;
 };
 
@@ -373,6 +382,7 @@ function AdminContent() {
   const [kycUsers, setKycUsers] = useState<KycUser[]>([]);
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [supportTickets, setSupportTickets] = useState<SupportTicket[]>([]);
+  const [announcements, setAnnouncements] = useState<Announcement[]>([]);
   const [emails, setEmails] = useState<Record<string, string>>({});
   const [emailsError, setEmailsError] = useState<string | null>(null);
   const [aggregates, setAggregates] = useState<Record<string, UserAggregate>>({});
@@ -410,6 +420,12 @@ function AdminContent() {
   const [replyBusy, setReplyBusy] = useState(false);
   const [resolveBusy, setResolveBusy] = useState(false);
 
+  // Announcement form state.
+  const [annTitle, setAnnTitle] = useState("");
+  const [annMessage, setAnnMessage] = useState("");
+  const [annType, setAnnType] = useState("info");
+  const [annBusy, setAnnBusy] = useState(false);
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
@@ -420,13 +436,14 @@ function AdminContent() {
       // Earnings aggregates are fetched in the same Promise.all: one
       // admin_user_aggregates() RPC covers every user row, so the tab needs a
       // single extra round-trip rather than a query per user.
-      const [dep, wd, kyc, userRows, agg, support] = await Promise.all([
+      const [dep, wd, kyc, userRows, agg, support, ann] = await Promise.all([
         supabase.from("transactions").select(TX_COLS).eq("type", "deposit").eq("status", "pending").order("created_at"),
         supabase.from("transactions").select(TX_COLS).eq("type", "withdrawal").eq("status", "pending").order("created_at"),
         supabase.from("profiles").select("id,full_name,kyc_status,id_card_url,created_at").eq("kyc_status", "pending").order("created_at"),
         fetchAdminUsers(),
         fetchUserAggregates(),
         supabase.from("support_tickets").select("*").order("created_at", { ascending: false }),
+        supabase.from("announcements").select("*").order("created_at", { ascending: false }),
       ]);
       if (dep.error) {
         console.error("[admin] deposits fetch error:", dep.error.code, dep.error.message, dep.error.details, dep.error.hint);
@@ -448,6 +465,7 @@ function AdminContent() {
       setKycUsers(kycRows);
       setUsers(userRows);
       setSupportTickets(((support as { data?: unknown[] })?.data ?? []) as SupportTicket[]);
+      setAnnouncements(((ann as { data?: unknown[] })?.data ?? []) as Announcement[]);
       setAggregates(agg.map);
       setAggregatesError(agg.error);
 
@@ -1015,12 +1033,75 @@ const openPlanModal = (user: AdminUser) => {
     }
   };
 
+  const createAnnouncement = async () => {
+    if (!annTitle.trim() || !annMessage.trim()) {
+      toast.error("Title and message are required.");
+      return;
+    }
+    setAnnBusy(true);
+    try {
+      await assertAdmin();
+      const { error } = await supabase.from("announcements").insert({
+        title: annTitle.trim(),
+        message: annMessage.trim(),
+        type: annType,
+        is_active: true,
+      });
+      if (error) throw error;
+      toast.success("Announcement created.");
+      setAnnTitle("");
+      setAnnMessage("");
+      setAnnType("info");
+      await load();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't create announcement.");
+    } finally {
+      setAnnBusy(false);
+    }
+  };
+
+  const toggleAnnouncement = async (a: Announcement) => {
+    setBusyId(a.id);
+    try {
+      await assertAdmin();
+      const { error } = await supabase
+        .from("announcements")
+        .update({ is_active: !a.is_active })
+        .eq("id", a.id);
+      if (error) throw error;
+      setAnnouncements((prev) =>
+        prev.map((x) => (x.id === a.id ? { ...x, is_active: !a.is_active } : x)),
+      );
+      toast.success(a.is_active ? "Deactivated." : "Activated.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't update announcement.");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const deleteAnnouncement = async (a: Announcement) => {
+    setBusyId(a.id);
+    try {
+      await assertAdmin();
+      const { error } = await supabase.from("announcements").delete().eq("id", a.id);
+      if (error) throw error;
+      setAnnouncements((prev) => prev.filter((x) => x.id !== a.id));
+      toast.success("Announcement deleted.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't delete announcement.");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   const tabs: { id: Tab; label: string; count: number }[] = [
     { id: "deposits", label: "Pending Deposits", count: deposits.length },
     { id: "users", label: "Users", count: users.length },
     { id: "withdrawals", label: "Pending Withdrawals", count: withdrawals.length },
     { id: "kyc", label: "KYC Verifications", count: kycUsers.length },
     { id: "support", label: "Support Tickets", count: supportTickets.length },
+    { id: "announcements", label: "Announcements", count: announcements.length },
   ];
 
   const filteredUsers = useMemo(() => {
@@ -1233,6 +1314,59 @@ const openPlanModal = (user: AdminUser) => {
                 ))}
               </tbody>
             </table></div>
+          </section>
+        )}
+        {tab === "announcements" && (
+          <section className="space-y-6">
+            <div className="rounded-2xl border bg-card p-6">
+              <h2 className="font-display text-xl font-bold">Create Announcement</h2>
+              <div className="mt-4 grid gap-4">
+                <div>
+                  <label className="text-xs font-semibold text-muted-foreground">Title</label>
+                  <input type="text" value={annTitle} onChange={(e) => setAnnTitle(e.target.value)} className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm" placeholder="Announcement title" />
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-muted-foreground">Message</label>
+                  <textarea value={annMessage} onChange={(e) => setAnnMessage(e.target.value)} className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm" rows={3} placeholder="Announcement message" />
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-muted-foreground">Type</label>
+                  <select value={annType} onChange={(e) => setAnnType(e.target.value)} className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm">
+                    <option value="info">info</option>
+                    <option value="warning">warning</option>
+                    <option value="success">success</option>
+                  </select>
+                </div>
+                <button type="button" onClick={() => void createAnnouncement()} disabled={annBusy} className="w-fit rounded-lg bg-primary px-4 py-2 text-sm font-bold text-primary-foreground disabled:opacity-50">
+                  {annBusy ? "Creating…" : "Create"}
+                </button>
+              </div>
+            </div>
+            <div className="overflow-hidden rounded-2xl border bg-card">
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[680px] text-left text-sm">
+                  <thead><tr className="border-b border-border/70 text-xs uppercase tracking-widest text-muted-foreground">
+                    <th className="px-4 py-3">Title</th><th className="px-4 py-3">Message</th><th className="px-4 py-3">Type</th><th className="px-4 py-3">Status</th><th className="px-4 py-3">Date</th><th className="px-4 py-3 text-right">Actions</th>
+                  </tr></thead>
+                  <tbody>
+                    {announcements.length === 0 && (<tr><td colSpan={6} className="px-4 py-10 text-center text-muted-foreground">No announcements.</td></tr>)}
+                    {announcements.map((a) => (
+                      <tr key={a.id} className="border-b border-border/40 last:border-0">
+                        <td className="px-4 py-3 font-medium">{a.title}</td>
+                        <td className="px-4 py-3 max-w-xs truncate">{a.message}</td>
+                        <td className="px-4 py-3">{a.type}</td>
+                        <td className="px-4 py-3">{a.is_active ? "Active" : "Inactive"}</td>
+                        <td className="px-4 py-3">{new Date(a.created_at).toLocaleDateString()}</td>
+                        <td className="px-4 py-3"><div className="flex justify-end gap-2">
+                          <button type="button" disabled={busyId === a.id} onClick={() => void toggleAnnouncement(a)} className="rounded-lg border border-border px-3 py-1.5 text-xs font-bold hover:border-primary hover:text-primary disabled:opacity-50">{a.is_active ? "Deactivate" : "Activate"}</button>
+                          <button type="button" disabled={busyId === a.id} onClick={() => void deleteAnnouncement(a)} className="rounded-lg bg-destructive px-3 py-1.5 text-xs font-bold text-destructive-foreground disabled:opacity-50">Delete</button>
+                        </div></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
           </section>
         )}
         </div>
