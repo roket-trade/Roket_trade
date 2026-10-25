@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type MouseEvent } from "react";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { toast } from "sonner";
 import { RequireAdmin } from "@/components/RequireAdmin";
@@ -54,6 +54,29 @@ type AdminUser = {
 
 type Tab = "deposits" | "users" | "withdrawals" | "kyc";
 
+// Money EARNED per user, aggregated from transactions — deposits are never part
+// of these figures. `adjustment` is the manual correction an admin can make
+// from the Edit modal and is already folded into totalEarned/availableBalance.
+type UserAggregate = {
+  totalEarned: number;
+  totalWithdrawn: number;
+  availableBalance: number;
+  referralCount: number;
+  adjustment: number;
+};
+
+const EMPTY_AGGREGATE: UserAggregate = {
+  totalEarned: 0,
+  totalWithdrawn: 0,
+  availableBalance: 0,
+  referralCount: 0,
+  adjustment: 0,
+};
+
+const EARNINGS_TYPES = ["daily_profit", "ad_earning", "referral_bonus"] as const;
+const TX_COLS =
+  "id,user_id,type,amount,deposit_amount,plan_name,network,wallet_address,tx_hash,status,created_at";
+
 const USER_COLS =
   "id,full_name,main_balance,extra_balance,kyc_status,plan_name,plan_started_at,plan_expires_at,is_admin,last_withdraw_at,created_at";
 const PLANS = ["Plan 1", "Plan 2", "Plan 3", "Plan 4"] as const;
@@ -62,6 +85,10 @@ const KYC_STATUSES = ["unverified", "pending", "verified", "rejected"] as const;
 const money = (n: number) => Number(n ?? 0).toLocaleString("en-US", { style: "currency", currency: "USD" });
 const short = (s: string | null, n = 18) => (!s ? "—" : s.length > n ? `${s.slice(0, n)}…` : s);
 const round2 = (n: number) => Math.round(n * 100) / 100;
+const asNumber = (value: unknown, fallback = 0) => {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+};
 
 // PostgREST reports a select on an unknown column as 42703 (and an unknown
 // column in a mutation payload as PGRST204). Tolerating both lets the panel
@@ -86,6 +113,103 @@ async function fetchAdminUsers(): Promise<AdminUser[]> {
     ...u,
     is_suspended: false,
   }));
+}
+
+// PostgREST hands numeric aggregates back as numbers, but a plain SQL function
+// can ship numeric as a string, so normalise both shapes.
+const aggregateRowsToMap = (rows: unknown): Record<string, UserAggregate> => {
+  const map: Record<string, UserAggregate> = {};
+  if (!Array.isArray(rows)) return map;
+  for (const raw of rows) {
+    const row = raw as Record<string, unknown> | null;
+    const id = typeof row?.["user_id"] === "string" ? row["user_id"] : null;
+    if (!id) continue;
+    map[id] = {
+      totalEarned: round2(asNumber(row?.["total_earned"])),
+      totalWithdrawn: round2(asNumber(row?.["total_withdrawn"])),
+      availableBalance: round2(asNumber(row?.["available_balance"])),
+      referralCount: Math.trunc(asNumber(row?.["referral_count"])),
+      adjustment: round2(asNumber(row?.["earnings_adjustment"])),
+    };
+  }
+  return map;
+};
+
+// Fallback for deployments that have not run the aggregate migration yet: two
+// batched queries for the whole page (never one query per user).
+async function fetchAggregatesFallback(): Promise<Record<string, UserAggregate>> {
+  const [txRes, refRes] = await Promise.all([
+    supabase
+      .from("transactions")
+      .select("user_id,type,amount,status")
+      .in("type", [...EARNINGS_TYPES, "withdrawal"]),
+    supabase.from("profiles").select("referred_by"),
+  ]);
+  if (txRes.error) throw txRes.error;
+  if (refRes.error) throw refRes.error;
+
+  const map: Record<string, UserAggregate> = {};
+  const ensure = (id: string): UserAggregate => {
+    const current = map[id];
+    if (current) return current;
+    const created = { ...EMPTY_AGGREGATE };
+    map[id] = created;
+    return created;
+  };
+
+  const txRows = (txRes.data ?? []) as {
+    user_id: string | null;
+    type: string;
+    amount: number | null;
+    status: string;
+  }[];
+  for (const row of txRows) {
+    if (!row.user_id) continue;
+    const agg = ensure(row.user_id);
+    const amount = Math.abs(asNumber(row.amount));
+    if (row.status === "completed" && (EARNINGS_TYPES as readonly string[]).includes(row.type)) {
+      agg.totalEarned = round2(agg.totalEarned + amount);
+    } else if (row.type === "withdrawal" && (row.status === "completed" || row.status === "pending")) {
+      agg.totalWithdrawn = round2(agg.totalWithdrawn + amount);
+    }
+  }
+
+  const refRows = (refRes.data ?? []) as { referred_by: string | null }[];
+  for (const row of refRows) {
+    if (row.referred_by) ensure(row.referred_by).referralCount += 1;
+  }
+
+  for (const agg of Object.values(map)) {
+    agg.availableBalance = round2(agg.totalEarned - agg.totalWithdrawn);
+  }
+  return map;
+}
+
+// One RPC (or one batched fallback) for every user on the page, so the Users
+// tab never issues a query per row.
+async function fetchUserAggregates(): Promise<{
+  map: Record<string, UserAggregate>;
+  error: string | null;
+}> {
+  const { data, error } = await supabase.rpc("admin_user_aggregates", { ids: null });
+  if (!error) return { map: aggregateRowsToMap(data), error: null };
+
+  logSupabaseError("admin_user_aggregates RPC", error);
+  try {
+    return { map: await fetchAggregatesFallback(), error: null };
+  } catch (fallbackError) {
+    logSupabaseError(
+      "user aggregates fallback",
+      fallbackError as { code?: string; message?: string; details?: string; hint?: string },
+    );
+    return {
+      map: {},
+      error:
+        fallbackError instanceof Error
+          ? fallbackError.message
+          : "Couldn't load earnings for the users list.",
+    };
+  }
 }
 
 // Every mutating action re-checks is_admin against the signed-in session, so
@@ -226,6 +350,8 @@ function AdminContent() {
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [emails, setEmails] = useState<Record<string, string>>({});
   const [emailsError, setEmailsError] = useState<string | null>(null);
+  const [aggregates, setAggregates] = useState<Record<string, UserAggregate>>({});
+  const [aggregatesError, setAggregatesError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [busyUserId, setBusyUserId] = useState<string | null>(null);
@@ -233,7 +359,23 @@ function AdminContent() {
   const [planUser, setPlanUser] = useState<AdminUser | null>(null);
   const [planPick, setPlanPick] = useState<string>("none");
   const [editUser, setEditUser] = useState<AdminUser | null>(null);
-  const [editDraft, setEditDraft] = useState({ main: "0", extra: "0", isAdmin: false, kyc: "unverified" });
+  const [editDraft, setEditDraft] = useState({
+    earned: "0",
+    available: "0",
+    isAdmin: false,
+    kyc: "unverified",
+  });
+  // Collapsible per-row action menu, anchored to the Actions button.
+  const [actionsFor, setActionsFor] = useState<{
+    userId: string;
+    top: number;
+    left: number;
+  } | null>(null);
+  // Transaction history modal.
+  const [txUser, setTxUser] = useState<AdminUser | null>(null);
+  const [txRows, setTxRows] = useState<Tx[]>([]);
+  const [txLoading, setTxLoading] = useState(false);
+  const [txError, setTxError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -241,13 +383,16 @@ function AdminContent() {
       // profiles has no email column, so nothing here selects or embeds it
       // (that used to raise PGRST204 / PGRST200). Emails are resolved from
       // auth.users afterwards through the admin_user_emails() RPC.
-      const txCols =
-        "id,user_id,type,amount,deposit_amount,plan_name,network,wallet_address,tx_hash,status,created_at";
-      const [dep, wd, kyc, userRows] = await Promise.all([
-        supabase.from("transactions").select(txCols).eq("type", "deposit").eq("status", "pending").order("created_at"),
-        supabase.from("transactions").select(txCols).eq("type", "withdrawal").eq("status", "pending").order("created_at"),
+      //
+      // Earnings aggregates are fetched in the same Promise.all: one
+      // admin_user_aggregates() RPC covers every user row, so the tab needs a
+      // single extra round-trip rather than a query per user.
+      const [dep, wd, kyc, userRows, agg] = await Promise.all([
+        supabase.from("transactions").select(TX_COLS).eq("type", "deposit").eq("status", "pending").order("created_at"),
+        supabase.from("transactions").select(TX_COLS).eq("type", "withdrawal").eq("status", "pending").order("created_at"),
         supabase.from("profiles").select("id,full_name,kyc_status,id_card_url,created_at").eq("kyc_status", "pending").order("created_at"),
         fetchAdminUsers(),
+        fetchUserAggregates(),
       ]);
       if (dep.error) {
         console.error("[admin] deposits fetch error:", dep.error.code, dep.error.message, dep.error.details, dep.error.hint);
@@ -268,6 +413,8 @@ function AdminContent() {
       setWithdrawals(wds);
       setKycUsers(kycRows);
       setUsers(userRows);
+      setAggregates(agg.map);
+      setAggregatesError(agg.error);
 
       // One RPC call covers every row on the page (deposits, withdrawals, KYC
       // and the users table), so the panel needs a single extra round-trip and
@@ -304,13 +451,25 @@ function AdminContent() {
     void load();
   }, [load]);
 
+  // Re-read the aggregates after a deposit/withdrawal decision: approving a
+  // deposit can pay a referral bonus, and rejecting a withdrawal refunds the
+  // balance, so Total Earned / Available Balance move without a full reload.
+  const refreshAggregates = useCallback(async () => {
+    const { map, error } = await fetchUserAggregates();
+    setAggregates(map);
+    setAggregatesError(error);
+  }, []);
+
   const signOut = async () => {
     await supabase.auth.signOut();
     navigate({ to: "/login", replace: true });
   };
 
   const approveDeposit = async (tx: Tx) => {
-    if (!tx.user_id) return toast.error("Transaction has no user.");
+    if (!tx.user_id) {
+      toast.error("Transaction has no user.");
+      return;
+    }
     setBusyId(tx.id);
     try {
       const credit = Number(tx.deposit_amount ?? tx.amount);
@@ -374,6 +533,7 @@ function AdminContent() {
         } else toast.success("Approved (referrer not found).");
       } else toast.success("Deposit approved.");
       setDeposits((d) => d.filter((t) => t.id !== tx.id));
+      void refreshAggregates();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Couldn't approve deposit.");
     } finally {
@@ -388,6 +548,7 @@ function AdminContent() {
       if (error) throw error;
       setDeposits((d) => d.filter((t) => t.id !== tx.id));
       toast.success("Deposit rejected.");
+      void refreshAggregates();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Couldn't reject deposit.");
     } finally {
@@ -402,6 +563,7 @@ function AdminContent() {
       if (error) throw error;
       setWithdrawals((w) => w.filter((t) => t.id !== tx.id));
       toast.success("Withdrawal completed.");
+      void refreshAggregates();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Couldn't approve withdrawal.");
     } finally {
@@ -410,7 +572,10 @@ function AdminContent() {
   };
 
   const rejectWithdrawal = async (tx: Tx) => {
-    if (!tx.user_id) return toast.error("Transaction has no user.");
+    if (!tx.user_id) {
+      toast.error("Transaction has no user.");
+      return;
+    }
     setBusyId(tx.id);
     try {
       const refund = Math.abs(Number(tx.amount));
@@ -427,6 +592,7 @@ function AdminContent() {
       if (tErr) throw tErr;
       setWithdrawals((w) => w.filter((t) => t.id !== tx.id));
       toast.success(`Rejected. ${money(refund)} refunded.`);
+      void refreshAggregates();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Couldn't reject withdrawal.");
     } finally {
@@ -555,37 +721,164 @@ function AdminContent() {
     }
   };
 
+  // --- Collapsible Actions menu -------------------------------------------
+  const toggleActions = (userId: string, event: MouseEvent<HTMLButtonElement>) => {
+    if (actionsFor?.userId === userId) {
+      setActionsFor(null);
+      return;
+    }
+    // Anchor the menu to the button: the table scrolls horizontally, so an
+    // absolutely positioned menu would be clipped by its overflow container.
+    const rect = event.currentTarget.getBoundingClientRect();
+    setActionsFor({ userId, top: rect.bottom + 6, left: Math.max(8, rect.right - 224) });
+  };
+  const closeActions = () => setActionsFor(null);
+
+  useEffect(() => {
+    if (!actionsFor) return;
+    const close = () => setActionsFor(null);
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") close();
+    };
+    window.addEventListener("keydown", onKey);
+    // The menu is anchored to the button, so anything that moves the page or
+    // the table would leave it floating in the wrong place.
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("resize", close);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("resize", close);
+    };
+  }, [actionsFor]);
+
+  // --- Transaction history ------------------------------------------------
+  const openTransactions = async (user: AdminUser) => {
+    setTxUser(user);
+    setTxRows([]);
+    setTxError(null);
+    setTxLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from("transactions")
+        .select(TX_COLS)
+        .eq("user_id", user.id)
+        .order("created_at", { ascending: false });
+      if (error) throw error;
+      setTxRows((data ?? []) as Tx[]);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Couldn't load transactions.";
+      console.error("[admin] transaction history failed:", err);
+      setTxError(message);
+    } finally {
+      setTxLoading(false);
+    }
+  };
+
+  // --- Edit earnings & KYC ------------------------------------------------
   const openEditModal = (user: AdminUser) => {
+    const agg = aggregates[user.id] ?? EMPTY_AGGREGATE;
     setEditDraft({
-      main: String(user.main_balance ?? 0),
-      extra: String(user.extra_balance ?? 0),
+      earned: String(round2(agg.totalEarned)),
+      available: String(round2(agg.availableBalance)),
       isAdmin: user.is_admin === true,
       kyc: user.kyc_status ?? "unverified",
     });
     setEditUser(user);
   };
 
+  // Available = Total Earned - Total Withdrawn, so the two inputs stay in step:
+  // editing one recalculates the other against the (fixed) withdrawn total.
+  const editWithdrawn = editUser
+    ? (aggregates[editUser.id] ?? EMPTY_AGGREGATE).totalWithdrawn
+    : 0;
+
+  const changeEarned = (value: string) => {
+    setEditDraft((draft) => ({
+      ...draft,
+      earned: value,
+      available:
+        value.trim() === "" ? "" : String(round2(Number(value) - editWithdrawn)),
+    }));
+  };
+
+  const changeAvailable = (value: string) => {
+    setEditDraft((draft) => ({
+      ...draft,
+      available: value,
+      earned: value.trim() === "" ? "" : String(round2(Number(value) + editWithdrawn)),
+    }));
+  };
+
   const saveEdits = async () => {
     if (!editUser) return;
     const target = editUser;
+    const agg = aggregates[target.id];
     setBusyUserId(target.id);
     try {
-      const main = Number(editDraft.main);
-      const extra = Number(editDraft.extra);
-      if (!Number.isFinite(main) || main < 0) throw new Error("Main balance must be a number 0 or greater.");
-      if (!Number.isFinite(extra) || extra < 0) throw new Error("Extra balance must be a number 0 or greater.");
+      if (!agg) {
+        throw new Error("Earnings are unavailable for this user right now. Refresh and try again.");
+      }
+      const earned = Number(editDraft.earned);
+      const available = Number(editDraft.available);
+      if (!Number.isFinite(earned) || earned < 0) {
+        throw new Error("Total Earned must be a number 0 or greater.");
+      }
+      if (!Number.isFinite(available) || available < 0) {
+        throw new Error("Available Balance must be a number 0 or greater.");
+      }
       const adminId = await assertAdmin();
       if (target.id === adminId && !editDraft.isAdmin) {
         throw new Error("You can't remove your own admin access.");
       }
+
+      // The gap between the requested Total Earned and the aggregated figure
+      // becomes a manual adjustment on the profile. Available Balance moves by
+      // the same delta because withdrawals are unchanged. Deposits are never
+      // part of either number.
+      const delta = round2(earned - agg.totalEarned);
+      const nextAdjustment = round2(agg.adjustment + delta);
+      // The dashboard reads profiles.main_balance, so mirror the delta there or
+      // the manual adjustment would never reach the user.
+      const nextMain = Math.max(0, round2(Number(target.main_balance ?? 0) + delta));
       const patch = {
-        main_balance: round2(main),
-        extra_balance: round2(extra),
+        earnings_adjustment: nextAdjustment,
+        main_balance: nextMain,
         is_admin: editDraft.isAdmin,
         kyc_status: editDraft.kyc,
       };
-      await updateProfile(target.id, patch, "edit balances/KYC");
-      patchUser(target.id, patch);
+
+      try {
+        await updateProfile(target.id, patch, "edit earnings/KYC");
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "";
+        // A deployment without the aggregate migration cannot store the
+        // adjustment column; the balance/KYC part must still save.
+        if (!/earnings_adjustment/i.test(message)) throw err;
+        await updateProfile(
+          target.id,
+          { main_balance: nextMain, is_admin: editDraft.isAdmin, kyc_status: editDraft.kyc },
+          "edit balance/KYC",
+        );
+        toast.warning(
+          "Balance saved, but Total Earned needs supabase/migrations/20261030000000_admin_user_aggregates.sql to persist.",
+        );
+      }
+
+      patchUser(target.id, {
+        main_balance: nextMain,
+        is_admin: editDraft.isAdmin,
+        kyc_status: editDraft.kyc,
+      });
+      setAggregates((current) => ({
+        ...current,
+        [target.id]: {
+          ...agg,
+          totalEarned: round2(agg.totalEarned + delta),
+          availableBalance: round2(agg.availableBalance + delta),
+          adjustment: nextAdjustment,
+        },
+      }));
       setEditUser(null);
       toast.success(`Saved changes for ${label(target)}.`);
     } catch (err) {
@@ -639,7 +932,7 @@ function AdminContent() {
         </div>
         {loading ? (
           <div className="flex min-h-[40vh] items-center justify-center"><div className="h-7 w-7 animate-spin rounded-full border-2 border-muted border-t-primary" /></div>
-        ) : (<div className="mt-6">{tab === "deposits" && (
+        ) : (<><div className="mt-6">{tab === "deposits" && (
           <section className="overflow-hidden rounded-2xl border bg-card">
             <div className="overflow-x-auto"><table className="w-full min-w-[760px] text-left text-sm">
               <thead><tr className="border-b border-border/70 text-xs uppercase tracking-widest text-muted-foreground">
@@ -685,21 +978,34 @@ function AdminContent() {
                 Emails unavailable: {emailsError}
               </p>
             )}
+            {aggregatesError && (
+              <p className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
+                Earnings unavailable: {aggregatesError} — run
+                supabase/migrations/20261030000000_admin_user_aggregates.sql.
+              </p>
+            )}
             <div className="overflow-hidden rounded-2xl border bg-card">
               <div className="overflow-x-auto"><table className="w-full min-w-[1080px] text-left text-sm">
                 <thead><tr className="border-b border-border/70 text-xs uppercase tracking-widest text-muted-foreground">
-                  <th className="px-4 py-3">Email</th><th className="px-4 py-3">Name</th><th className="px-4 py-3">Main Balance</th>
-                  <th className="px-4 py-3">Extra Balance</th><th className="px-4 py-3">KYC Status</th><th className="px-4 py-3">Plan Name</th>
-                  <th className="px-4 py-3">Account Status</th><th className="px-4 py-3 text-right">Actions</th>
+                  <th className="px-4 py-3">Email</th><th className="px-4 py-3">Name</th>
+                  <th className="px-4 py-3">Total Earned</th><th className="px-4 py-3">Available Balance</th>
+                  <th className="px-4 py-3">Referrals</th><th className="px-4 py-3">KYC Status</th>
+                  <th className="px-4 py-3">Plan Name</th><th className="px-4 py-3">Account Status</th>
+                  <th className="px-4 py-3 text-right">Actions</th>
                 </tr></thead>
                 <tbody>
-                  {filteredUsers.length === 0 && (<tr><td colSpan={8} className="px-4 py-10 text-center text-muted-foreground">{users.length === 0 ? "No users yet." : "No users match that search."}</td></tr>)}
-                  {filteredUsers.map((u) => (
+                  {filteredUsers.length === 0 && (<tr><td colSpan={9} className="px-4 py-10 text-center text-muted-foreground">{users.length === 0 ? "No users yet." : "No users match that search."}</td></tr>)}
+                  {filteredUsers.map((u) => {
+                    // Earnings come from completed transactions only — a deposit
+                    // is never shown as (or editable as) a balance.
+                    const agg = aggregates[u.id];
+                    return (
                     <tr key={u.id} className="border-b border-border/40 last:border-0">
                       <td className="px-4 py-3 font-medium">{emails[u.id] ?? short(u.id, 10)}</td>
                       <td className="px-4 py-3">{u.full_name || "—"}</td>
-                      <td className="px-4 py-3 font-semibold text-primary">{money(Number(u.main_balance ?? 0))}</td>
-                      <td className="px-4 py-3">{money(Number(u.extra_balance ?? 0))}</td>
+                      <td className="px-4 py-3 font-semibold text-primary" title="Completed daily profit + ad rewards + referral bonuses (deposits excluded)">{agg ? money(agg.totalEarned) : "—"}</td>
+                      <td className="px-4 py-3" title={agg ? `Earned ${money(agg.totalEarned)} − withdrawn ${money(agg.totalWithdrawn)}` : "Earnings unavailable"}>{agg ? money(agg.availableBalance) : "—"}</td>
+                      <td className="px-4 py-3">{agg ? agg.referralCount : "—"}</td>
                       <td className="px-4 py-3">
                         <span className={u.kyc_status === "verified"
                           ? "rounded-full bg-emerald-500/15 px-2.5 py-1 text-xs font-semibold text-emerald-400"
@@ -717,17 +1023,14 @@ function AdminContent() {
                           {u.is_suspended ? "Held" : "Active"}
                         </span>
                       </td>
-                      <td className="px-4 py-3">
-                        <div className="flex flex-wrap justify-end gap-2">
-                          <button type="button" disabled={busyUserId === u.id} onClick={() => void resetWithdrawLimit(u)} className="rounded-lg border border-border px-3 py-1.5 text-xs font-bold text-muted-foreground hover:border-primary hover:text-primary disabled:opacity-50">Reset Withdraw Limit</button>
-                          <button type="button" disabled={busyUserId === u.id} onClick={() => void sendPasswordReset(u)} className="rounded-lg border border-border px-3 py-1.5 text-xs font-bold text-muted-foreground hover:border-primary hover:text-primary disabled:opacity-50">Send Reset Password</button>
-                          <button type="button" disabled={busyUserId === u.id} onClick={() => void toggleSuspend(u)} className={u.is_suspended ? "rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-emerald-500 disabled:opacity-50" : "rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-amber-500 disabled:opacity-50"}>{u.is_suspended ? "Unhold Account" : "Hold Account"}</button>
-                          <button type="button" disabled={busyUserId === u.id} onClick={() => openPlanModal(u)} className="rounded-lg bg-primary/15 px-3 py-1.5 text-xs font-bold text-primary hover:bg-primary/25 disabled:opacity-50">Manage Plan</button>
-                          <button type="button" disabled={busyUserId === u.id} onClick={() => openEditModal(u)} className="rounded-lg border border-primary/40 px-3 py-1.5 text-xs font-bold text-primary hover:bg-primary/10 disabled:opacity-50">Edit Balances &amp; KYC</button>
-                        </div>
+                      <td className="px-4 py-3 text-right">
+                        <button type="button" aria-haspopup="menu" aria-expanded={actionsFor?.userId === u.id} disabled={busyUserId === u.id} onClick={(event) => toggleActions(u.id, event)} className="rounded-lg border border-border px-3 py-1.5 text-xs font-bold text-muted-foreground hover:border-primary hover:text-primary disabled:opacity-50">
+                          {busyUserId === u.id ? "…" : "Actions"}
+                        </button>
                       </td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table></div>
             </div>
@@ -780,6 +1083,64 @@ function AdminContent() {
           </section>
         )}
         </div>
+        {actionsFor && (() => {
+          const target = users.find((u) => u.id === actionsFor.userId);
+          if (!target) return null;
+          const itemClass = "block w-full rounded-lg px-3 py-2 text-left text-xs font-bold text-muted-foreground transition-colors hover:bg-primary/10 hover:text-primary disabled:opacity-50";
+          return (
+            <>
+              <div className="fixed inset-0 z-40" onClick={closeActions} aria-hidden="true" />
+              <div aria-label={`Actions for ${label(target)}`} style={{ top: actionsFor.top, left: actionsFor.left }} className="fixed z-50 w-56 rounded-xl border bg-card p-1.5 shadow-xl">
+                <button type="button" disabled={busyUserId === target.id} onClick={() => { closeActions(); void openTransactions(target); }} className={itemClass}>View Transactions</button>
+                <button type="button" disabled={busyUserId === target.id} onClick={() => { closeActions(); void resetWithdrawLimit(target); }} className={itemClass}>Reset Withdraw Limit</button>
+                <button type="button" disabled={busyUserId === target.id} onClick={() => { closeActions(); void sendPasswordReset(target); }} className={itemClass}>Send Reset Password</button>
+                <button type="button" disabled={busyUserId === target.id} onClick={() => { closeActions(); void toggleSuspend(target); }} className={itemClass}>{target.is_suspended ? "Unhold Account" : "Hold Account"}</button>
+                <button type="button" disabled={busyUserId === target.id} onClick={() => { closeActions(); openPlanModal(target); }} className={itemClass}>Manage Plan</button>
+                <button type="button" disabled={busyUserId === target.id} onClick={() => { closeActions(); openEditModal(target); }} className={itemClass}>Edit Balances &amp; KYC</button>
+              </div>
+            </>
+          );
+        })()}
+        {txUser && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4" role="dialog" aria-modal="true" aria-labelledby="tx-modal-title">
+            <div className="flex max-h-[85vh] w-full max-w-3xl flex-col rounded-2xl border bg-card p-6 shadow-xl">
+              <h2 id="tx-modal-title" className="font-display text-xl font-bold">Transaction history</h2>
+              <p className="mt-1 text-sm text-muted-foreground">{label(txUser)}</p>
+              <div className="mt-5 flex-1 overflow-auto rounded-xl border">
+                <table className="w-full min-w-[520px] text-left text-sm">
+                  <thead><tr className="border-b border-border/70 text-xs uppercase tracking-widest text-muted-foreground">
+                    <th className="px-4 py-3">Date</th><th className="px-4 py-3">Type</th><th className="px-4 py-3">Amount</th><th className="px-4 py-3">Status</th>
+                  </tr></thead>
+                  <tbody>
+                    {txLoading && (<tr><td colSpan={4} className="px-4 py-10 text-center text-muted-foreground">Loading transactions…</td></tr>)}
+                    {!txLoading && txError && (<tr><td colSpan={4} className="px-4 py-10 text-center text-destructive">{txError}</td></tr>)}
+                    {!txLoading && !txError && txRows.length === 0 && (<tr><td colSpan={4} className="px-4 py-10 text-center text-muted-foreground">No transactions yet.</td></tr>)}
+                    {!txLoading && !txError && txRows.map((tx) => (
+                      <tr key={tx.id} className="border-b border-border/40 last:border-0">
+                        <td className="px-4 py-3 text-muted-foreground">{new Date(tx.created_at).toLocaleString()}</td>
+                        <td className="px-4 py-3 capitalize">{tx.type.replace(/_/g, " ")}</td>
+                        <td className={tx.type === "withdrawal" ? "px-4 py-3 font-semibold text-destructive" : "px-4 py-3 font-semibold text-primary"}>{money(Number(tx.amount))}</td>
+                        <td className="px-4 py-3">
+                          <span className={tx.status === "completed"
+                            ? "rounded-full bg-emerald-500/15 px-2.5 py-1 text-xs font-semibold text-emerald-400"
+                            : tx.status === "pending"
+                              ? "rounded-full bg-amber-500/15 px-2.5 py-1 text-xs font-semibold text-amber-400"
+                              : "rounded-full bg-destructive/15 px-2.5 py-1 text-xs font-semibold text-destructive"}>
+                            {tx.status}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div className="mt-5 flex justify-end">
+                <button type="button" onClick={() => setTxUser(null)} className="rounded-lg border border-border px-4 py-2 text-sm font-semibold text-muted-foreground hover:text-foreground">Close</button>
+              </div>
+            </div>
+          </div>
+        )}
+        </>
         )}
         {planUser && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4" role="dialog" aria-modal="true" aria-labelledby="plan-modal-title">
@@ -803,18 +1164,26 @@ function AdminContent() {
         {editUser && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4" role="dialog" aria-modal="true" aria-labelledby="edit-modal-title">
             <div className="w-full max-w-md rounded-2xl border bg-card p-6 shadow-xl">
-              <h2 id="edit-modal-title" className="font-display text-xl font-bold">Edit balances &amp; KYC</h2>
+              <h2 id="edit-modal-title" className="font-display text-xl font-bold">Edit earnings &amp; KYC</h2>
               <p className="mt-1 text-sm text-muted-foreground">{label(editUser)}</p>
-              <div className="mt-5 grid gap-4 sm:grid-cols-2">
+              <p className="mt-3 rounded-lg bg-muted/60 px-3 py-2 text-xs text-muted-foreground">
+                Total Earned comes from completed daily profit, ad rewards and referral bonuses. Available Balance is
+                Total Earned minus withdrawals (completed + pending). Deposits are never included; editing either field
+                stores a manual adjustment.
+              </p>
+              <div className="mt-4 grid gap-4 sm:grid-cols-2">
                 <div className="space-y-1.5">
-                  <label htmlFor="edit-main" className="text-sm font-medium">Main balance</label>
-                  <input id="edit-main" type="number" min="0" step="0.01" value={editDraft.main} onChange={(e) => setEditDraft((d) => ({ ...d, main: e.target.value }))} className="w-full rounded-lg border border-border bg-muted/70 px-4 py-3 text-sm text-foreground outline-none transition-colors focus:border-primary focus:ring-2 focus:ring-primary/20" />
+                  <label htmlFor="edit-earned" className="text-sm font-medium">Total Earned</label>
+                  <input id="edit-earned" type="number" min="0" step="0.01" value={editDraft.earned} onChange={(e) => changeEarned(e.target.value)} className="w-full rounded-lg border border-border bg-muted/70 px-4 py-3 text-sm text-foreground outline-none transition-colors focus:border-primary focus:ring-2 focus:ring-primary/20" />
                 </div>
                 <div className="space-y-1.5">
-                  <label htmlFor="edit-extra" className="text-sm font-medium">Extra balance</label>
-                  <input id="edit-extra" type="number" min="0" step="0.01" value={editDraft.extra} onChange={(e) => setEditDraft((d) => ({ ...d, extra: e.target.value }))} className="w-full rounded-lg border border-border bg-muted/70 px-4 py-3 text-sm text-foreground outline-none transition-colors focus:border-primary focus:ring-2 focus:ring-primary/20" />
+                  <label htmlFor="edit-available" className="text-sm font-medium">Available Balance</label>
+                  <input id="edit-available" type="number" min="0" step="0.01" value={editDraft.available} onChange={(e) => changeAvailable(e.target.value)} className="w-full rounded-lg border border-border bg-muted/70 px-4 py-3 text-sm text-foreground outline-none transition-colors focus:border-primary focus:ring-2 focus:ring-primary/20" />
                 </div>
               </div>
+              <p className="mt-2 text-xs text-muted-foreground">
+                Withdrawn so far: {money(editWithdrawn)}.
+              </p>
               <div className="mt-4 space-y-1.5">
                 <label htmlFor="edit-kyc" className="text-sm font-medium">KYC status</label>
                 <select id="edit-kyc" value={editDraft.kyc} onChange={(e) => setEditDraft((d) => ({ ...d, kyc: e.target.value }))} className="w-full rounded-lg border border-border bg-muted/70 px-4 py-3 text-sm text-foreground outline-none transition-colors focus:border-primary focus:ring-2 focus:ring-primary/20">

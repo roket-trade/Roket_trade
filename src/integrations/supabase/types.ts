@@ -56,6 +56,7 @@ export type Database = {
           created_at: string
           default_wallet_address: string | null
           default_wallet_type: string | null
+          earnings_adjustment: number
           extra_balance: number | null
           full_name: string
           id: string
@@ -78,6 +79,7 @@ export type Database = {
           created_at?: string
           default_wallet_address?: string | null
           default_wallet_type?: string | null
+          earnings_adjustment?: number
           extra_balance?: number | null
           full_name: string
           id: string
@@ -100,6 +102,7 @@ export type Database = {
           created_at?: string
           default_wallet_address?: string | null
           default_wallet_type?: string | null
+          earnings_adjustment?: number
           extra_balance?: number | null
           full_name?: string
           id?: string
@@ -187,6 +190,17 @@ export type Database = {
       admin_user_emails: {
         Args: { ids?: string[] | null }
         Returns: { id: string; email: string | null }[]
+      }
+      admin_user_aggregates: {
+        Args: { ids?: string[] | null }
+        Returns: {
+          user_id: string
+          total_earned: number
+          total_withdrawn: number
+          available_balance: number
+          referral_count: number
+          earnings_adjustment: number
+        }[]
       }
       get_all_user_emails: {
         Args: { ids?: string[] | null }
