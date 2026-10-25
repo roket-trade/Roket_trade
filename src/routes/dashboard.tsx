@@ -79,7 +79,7 @@ type RecentWithdrawal = {
   id: string;
   amount: number | string;
   created_at: string;
-  status: string | null;
+  status: string;
 };
 
 type DashboardSummary = {
@@ -292,8 +292,6 @@ function formatDay(iso: string | null): string {
 }
 
 const WITHDRAW_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000;
-const HOLD_SECONDS_MS = 3000;
-const HOLD_TICK_MS = 50;
 
 const money = (n: number) => n.toLocaleString("en-US", { style: "currency", currency: "USD" });
 
@@ -642,20 +640,42 @@ function WithdrawCard({
         {withdrawals.length === 0 ? (
           <li className="py-3 text-xs text-muted-foreground">No withdrawals yet.</li>
         ) : (
-          withdrawals.map((row) => (
-            <li key={row.id} className="flex items-center justify-between gap-2 py-2 text-xs">
-              <span className="text-muted-foreground">
-                {new Date(row.created_at).toLocaleDateString("en-US", {
-                  month: "short",
-                  day: "numeric",
-                  year: "numeric",
-                })}
-              </span>
-              <span className="font-semibold text-rose-400">
-                -{money(Math.abs(Number(row.amount) || 0))}
-              </span>
-            </li>
-          ))
+          withdrawals.map((row) => {
+            const status = (row.status || "").toLowerCase();
+            const badgeClass =
+              status === "completed"
+                ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                : status === "rejected"
+                  ? "bg-red-500/10 text-red-400 border border-red-500/20"
+                  : "bg-amber-500/10 text-amber-400 border border-amber-500/20";
+            const badgeLabel =
+              status === "completed"
+                ? "Success"
+                : status === "rejected"
+                  ? "Rejected"
+                  : "Pending";
+            return (
+              <li key={row.id} className="flex items-center justify-between gap-2 py-2 text-xs">
+                <span className="text-muted-foreground">
+                  {new Date(row.created_at).toLocaleDateString("en-US", {
+                    month: "short",
+                    day: "numeric",
+                    year: "numeric",
+                  })}
+                </span>
+                <span className="flex items-center gap-2">
+                  <span className="font-semibold text-rose-400">
+                    -{money(Math.abs(Number(row.amount) || 0))}
+                  </span>
+                  <span
+                    className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${badgeClass}`}
+                  >
+                    {badgeLabel}
+                  </span>
+                </span>
+              </li>
+            );
+          })
         )}
       </ul>
 
@@ -828,21 +848,13 @@ function DashboardContent() {
   const [withdrawalOpen, setWithdrawalOpen] = useState(false);
   const [withdrawalBusy, setWithdrawalBusy] = useState(false);
   const [withdrawalSuccess, setWithdrawalSuccess] = useState(false);
-  const [submissionDone, setSubmissionDone] = useState(false);
-  const [isProcessing, setIsProcessing] = useState(false);
-  const hasSubmitted = useRef(false); // one-shot guard: prevent hold-timer from re-triggering submit
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [withdrawAmount, setWithdrawAmount] = useState("");
   const [selectedWallet, setSelectedWallet] = useState<{
     type: WalletType;
     address: string;
   } | null>(null);
-  const [holdActive, setHoldActive] = useState(false);
-  const [holdProgress, setHoldProgress] = useState(0);
-  const [holdTimer, setHoldTimer] = useState<ReturnType<typeof setInterval> | null>(
-    null,
-  );
-  const [holdStartTime, setHoldStartTime] = useState<number | null>(null);
+  const [confirmOpen, setConfirmOpen] = useState(false);
 
   const [walletManagementOpen, setWalletManagementOpen] = useState(false);
   const [savedWallets, setSavedWallets] = useState<{
@@ -1352,9 +1364,7 @@ function DashboardContent() {
 
   const openWithdrawal = () => {
     setWithdrawAmount("");
-    setHoldProgress(0);
-    setHoldTimer(null);
-    setHoldStartTime(null);
+    setConfirmOpen(false);
 
     const wallets = profile?.saved_wallets as SavedWallets | undefined;
     const defaultType =
@@ -1366,10 +1376,8 @@ function DashboardContent() {
     setWithdrawalOpen(true);
   };
 
-  const submitWithdrawal = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (submissionDone) return;
-    if (!user || withdrawalBusy) return;
+  const submitWithdrawal = async () => {
+    if (!user || withdrawalBusy || isSubmitting) return;
     if (withdrawLocked) {
       toast.error(withdrawBlockedReason || "Withdrawals are limited to once every 7 days.");
       return;
@@ -1398,7 +1406,8 @@ function DashboardContent() {
     }
 
     setWithdrawalBusy(true);
-    setSubmissionDone(false); // allow previous call to finish without re-triggering UI flash
+    setIsSubmitting(true);
+    setConfirmOpen(false);
     try {
       const nowIso = new Date().toISOString();
       const address = selectedWallet.address.trim();
@@ -1427,13 +1436,7 @@ function DashboardContent() {
       setWithdrawalOpen(false);
       setWithdrawAmount("");
       setSelectedWallet(null);
-      setHoldProgress(0);
-      setHoldTimer(null);
-      setHoldStartTime(null);
       setWithdrawalSuccess(true);
-      setSubmissionDone(true); // block any further submissions (hold-timer + button)
-      // Single success toast only â€” prevents infinite stacking on repeated submit calls.
-      toast.success("Withdrawal request submitted for manual review.");
     } catch (err) {
       if (err instanceof Error && err.message?.includes('23505')) {
         toast.error("You already have a pending withdrawal request.");
@@ -1443,6 +1446,7 @@ function DashboardContent() {
       }
     } finally {
       setWithdrawalBusy(false);
+      setIsSubmitting(false);
     }
   };
 
@@ -1453,45 +1457,6 @@ function DashboardContent() {
     parsedWithdrawAmount >= 50 &&
     parsedWithdrawAmount <= 200 &&
     parsedWithdrawAmount <= availableWithdrawal;
-
-  const startHold = (e: React.PointerEvent) => {
-    e.preventDefault();
-    if (
-      withdrawalBusy ||
-      holdActive ||
-      withdrawLocked ||
-      !selectedWallet?.address.trim() ||
-      !isWithdrawAmountValid ||
-      isProcessing
-    )
-      return;
-    setHoldActive(true);
-    setHoldProgress(0);
-    setHoldStartTime(Date.now());
-    setHoldTimer(
-      setInterval(() => {
-        const elapsed = (Date.now() - (holdStartTime ?? 0)) / HOLD_SECONDS_MS;
-        setHoldProgress(Math.min(elapsed, 1));
-        if (elapsed >= 1) {
-          if (hasSubmitted.current) return;
-          hasSubmitted.current = true;
-          setIsSubmitting(true);
-          cancelHold();
-          void submitWithdrawal({
-            preventDefault: () => {},
-          } as unknown as React.FormEvent);
-        }
-      }, HOLD_TICK_MS),
-    );
-  };
-
-  const cancelHold = () => {
-    setHoldActive(false);
-    setHoldProgress(0);
-    setHoldStartTime(null);
-    if (holdTimer) clearInterval(holdTimer);
-    setHoldTimer(null);
-  };
 
   // Auto-dismiss the success notification bar after 3 seconds.
   useEffect(() => {
@@ -2221,8 +2186,8 @@ function DashboardContent() {
               </div>
               <button
                 type="button"
-                onClick={() => setWithdrawalOpen(false)}
-                disabled={withdrawalBusy || holdActive}
+                onClick={() => !isSubmitting && setWithdrawalOpen(false)}
+                disabled={withdrawalBusy || isSubmitting}
                 aria-label="Close withdrawal"
                 className="rounded-lg border border-border px-3 py-1.5 text-sm font-semibold text-muted-foreground hover:text-foreground disabled:opacity-50"
               >
@@ -2230,7 +2195,7 @@ function DashboardContent() {
               </button>
             </div>
 
-            <form onSubmit={submitWithdrawal} className="mt-4 space-y-5">
+            <form className="mt-4 space-y-5">
               <div className="space-y-1.5">
                 <label className="text-sm font-medium">Withdraw to</label>
                 <div className="flex items-center gap-2">
@@ -2254,7 +2219,7 @@ function DashboardContent() {
                         setSelectedWallet({ type, address: addr });
                       }}
                       className="rounded-lg border bg-muted px-4 py-3 text-sm outline-none focus:border-primary"
-                      disabled={withdrawalBusy || holdActive}
+                      disabled={withdrawalBusy || isSubmitting}
                     >
                       {walletOptions(
                         profile?.saved_wallets as SavedWallets | undefined,
@@ -2298,36 +2263,93 @@ function DashboardContent() {
               <div className="space-y-2">
                 <button
                   type="button"
-                  onPointerDown={startHold}
-                  onPointerUp={cancelHold}
-                  onPointerLeave={cancelHold}
-                  onDragEnd={cancelHold}
+                  onClick={() => setConfirmOpen(true)}
                   disabled={
                     withdrawalBusy ||
+                    isSubmitting ||
                     !selectedWallet?.address.trim() ||
                     !isWithdrawAmountValid ||
                     withdrawLocked
                   }
-                  className={`w-full rounded-lg py-3 font-display font-bold text-primary-foreground shadow-glow transition-all duration-200 ${
-                    holdActive ? "bg-emerald-500" : "bg-brand"
-                  } disabled:cursor-not-allowed disabled:opacity-60`}
+                  className="w-full rounded-lg bg-brand py-3 font-display font-bold text-primary-foreground shadow-glow transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  {holdActive ? "Hold to confirmâ€¦" : "Submit Withdrawal"}
+                  Submit Withdrawal
                 </button>
-                <div className="h-1.5 w-full rounded-full bg-muted/40 overflow-hidden">
-                  <div
-                    className="h-full bg-brand transition-all duration-100"
-                    style={{ width: `${holdProgress * 100}%` }}
-                  />
-                </div>
-                <p className="text-center text-xs text-muted-foreground">
-                  Hold for 3 seconds to confirm. Release to cancel.
-                </p>
               </div>
               <p className="text-center text-xs text-muted-foreground">
                 One withdrawal every 7 days. Requests need manual review.
               </p>
             </form>
+          </div>
+        </div>
+      )}
+
+      {confirmOpen && selectedWallet && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="withdrawal-confirm-title"
+            className="w-full max-w-md rounded-2xl border bg-card p-6 shadow-glow"
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.25em] text-primary">
+                  Confirm Withdrawal
+                </p>
+                <h2 id="withdrawal-confirm-title" className="mt-1 font-display text-xl font-bold">
+                  Verify Details
+                </h2>
+              </div>
+              <button
+                type="button"
+                onClick={() => !isSubmitting && setConfirmOpen(false)}
+                disabled={isSubmitting}
+                aria-label="Cancel confirmation"
+                className="rounded-lg border border-border px-3 py-1.5 text-sm font-semibold text-muted-foreground hover:text-foreground disabled:opacity-50"
+              >
+                &times;
+              </button>
+            </div>
+
+            <div className="mt-4 space-y-4">
+              <div className="rounded-lg bg-muted/30 p-4 space-y-2">
+                <div className="flex justify-between">
+                  <span className="text-sm text-muted-foreground">Amount</span>
+                  <span className="text-sm font-medium">
+                    {money(Number(withdrawAmount))}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-sm text-muted-foreground">Wallet Address</span>
+                  <span className="text-sm font-medium">
+                    {maskWallet(selectedWallet.address)} ({WALLET_LABELS[selectedWallet.type]})
+                  </span>
+                </div>
+              </div>
+              <p className="text-sm text-amber-400">
+                Please ensure the address is correct. Withdrawals cannot be reversed.
+              </p>
+            </div>
+
+            <div className="mt-6 flex gap-3">
+              <button
+                type="button"
+                onClick={() => setConfirmOpen(false)}
+                disabled={isSubmitting}
+                className="flex-1 rounded-lg border border-border py-3 text-sm font-semibold text-muted-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={submitWithdrawal}
+                disabled={isSubmitting}
+                className="flex-1 rounded-lg bg-brand py-3 font-display font-bold text-primary-foreground shadow-glow disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {isSubmitting ? "Submitting..." : "Confirm"}
+              </button>
+            </div>
           </div>
         </div>
       )}

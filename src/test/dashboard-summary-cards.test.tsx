@@ -111,6 +111,7 @@ vi.mock("@/integrations/supabase/client", () => {
                 amount: -50,
                 created_at: "2026-09-04T00:00:00.000Z",
                 wallet_address: "0x35aec7E35F65ea227e49fDd321709D52Ada389E4",
+                status: "pending",
               },
             ];
           } else if (filters["type"] === "deposit") {
