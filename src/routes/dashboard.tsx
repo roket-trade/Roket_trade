@@ -1,4 +1,4 @@
-﻿import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import type { User } from "@supabase/supabase-js";
 import type { ApexOptions } from "apexcharts";
@@ -12,6 +12,7 @@ import {
   Ticket,
   TrendingDown,
   TrendingUp,
+  X,
 } from "lucide-react";
 import { toast } from "sonner";
 import { AdsterraBanner } from "@/components/AdsterraBanner";
@@ -28,9 +29,9 @@ import { buildReferralLink } from "@/lib/referral";
 export const Route = createFileRoute("/dashboard")({
   head: () => ({
     meta: [
-      { title: "Dashboard â€” Roket" },
+      { title: "Dashboard — Roket" },
       { name: "description", content: "Manage your Roket account, referral link, and plans." },
-      { property: "og:title", content: "Dashboard â€” Roket" },
+      { property: "og:title", content: "Dashboard — Roket" },
       {
         property: "og:description",
         content: "Manage your Roket account, referral link, and plans.",
@@ -274,16 +275,16 @@ function planDailyRate(planName: string | null, investment: number): number {
 }
 
 function truncateWallet(address: string | null): string {
-  if (!address) return "â€”";
+  if (!address) return "—";
   const trimmed = address.trim();
   if (trimmed.length <= 10) return trimmed;
   return `${trimmed.slice(0, 4)}...${trimmed.slice(-4)}`;
 }
 
 function formatDay(iso: string | null): string {
-  if (!iso) return "â€”";
+  if (!iso) return "—";
   const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return "â€”";
+  if (Number.isNaN(date.getTime())) return "—";
   return date.toLocaleDateString("en-US", {
     month: "short",
     day: "numeric",
@@ -457,7 +458,7 @@ function AdsRewardCard({
         <ul className="mt-2 divide-y divide-gray-800">
           {earnings.length === 0 ? (
             <li className="py-3 text-xs text-muted-foreground">
-              No rewards yet â€” watch your first ad.
+              No rewards yet — watch your first ad.
             </li>
           ) : (
             earnings.map((row) => (
@@ -526,7 +527,7 @@ function ReferralCard({
         Your code
       </p>
       <div className="mt-1 flex items-center justify-between gap-2 rounded-lg border border-gray-800 bg-gray-950/50 px-3 py-2">
-        <span className="font-mono text-sm font-bold text-emerald-400">{code || "â€”"}</span>
+        <span className="font-mono text-sm font-bold text-emerald-400">{code || "—"}</span>
         <button
           type="button"
           onClick={onCopyCode}
@@ -537,7 +538,7 @@ function ReferralCard({
         </button>
       </div>
       <p className="mt-2 break-all font-mono text-[10px] leading-relaxed text-muted-foreground">
-        {link || "â€”"}
+        {link || "—"}
       </p>
 
       <button
@@ -738,7 +739,7 @@ function UserControlCard({
           <dt className="text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
             Email
           </dt>
-          <dd className="mt-0.5 truncate text-foreground">{email || "â€”"}</dd>
+          <dd className="mt-0.5 truncate text-foreground">{email || "—"}</dd>
         </div>
         <div>
           <dt className="text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
@@ -972,7 +973,7 @@ function DashboardContent() {
         return (legacy.data ?? []) as ReferralBonusRow[];
       };
 
-      // Secondary dashboard data â€” failures here must not block the page.
+      // Secondary dashboard data — failures here must not block the page.
       // All recent-list queries + aggregates run in one parallel batch.
       const [
         adRows,
@@ -1294,7 +1295,7 @@ function DashboardContent() {
       await navigator.clipboard.writeText(referralCode);
       toast.success("Referral code copied");
     } catch {
-      toast.error("Couldn't copy â€” please copy it manually");
+      toast.error("Couldn't copy — please copy it manually");
     }
   };
 
@@ -1304,7 +1305,7 @@ function DashboardContent() {
       await navigator.clipboard.writeText(referralLink);
       toast.success("Referral link copied");
     } catch {
-      toast.error("Couldn't copy â€” please copy it manually");
+      toast.error("Couldn't copy — please copy it manually");
     }
   };
 
@@ -1318,7 +1319,7 @@ function DashboardContent() {
     totalBalance - summary.totalDeposited - summary.totalPendingWithdrawals,
   );
 
-  // Total Balance card shows money EARNED only â€” never deposits. Main is the
+  // Total Balance card shows money EARNED only — never deposits. Main is the
   // sum of daily_profit transactions; Extra is ads + referral bonuses.
   const totalDailyProfit = summary.dailyProfit;
   const totalAdsReward = summary.adReward;
@@ -1628,7 +1629,7 @@ function DashboardContent() {
               disabled={refreshingProfile}
               className="mt-3 rounded-lg border border-border px-4 py-2 text-sm font-semibold text-foreground transition-colors hover:border-primary hover:text-primary disabled:cursor-not-allowed disabled:opacity-60"
             >
-              {refreshingProfile ? "Retryingâ€¦" : "Retry"}
+              {refreshingProfile ? "Retrying…" : "Retry"}
             </button>
           </div>
         )}
@@ -1660,7 +1661,7 @@ function DashboardContent() {
                   {money(Number.isFinite(totalEarned) ? totalEarned : 0)}
                 </p>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  Main {money(totalDailyProfit)} Â· Extra {money(extraEarned)}
+                  Main {money(totalDailyProfit)} · Extra {money(extraEarned)}
                 </p>
                 <dl className="mt-4 space-y-2 border-t border-gray-800 pt-4 text-sm">
                   <div className="flex items-center justify-between gap-3">
@@ -1755,7 +1756,7 @@ function DashboardContent() {
                     <dt className="text-muted-foreground">Latest Withdraw</dt>
                     <dd className="text-right">
                       <span className="block font-semibold text-foreground">
-                        {summary.latestWithdraw ? money(summary.latestWithdraw.amount) : "â€”"}
+                        {summary.latestWithdraw ? money(summary.latestWithdraw.amount) : "—"}
                       </span>
                       {summary.latestWithdraw && (
                         <span className="block text-[11px] text-muted-foreground">
@@ -1784,7 +1785,7 @@ function DashboardContent() {
                     Live Chart
                   </p>
                   <p className="mt-1 text-sm text-muted-foreground">
-                    Live candlesticks Â· updates every 3s
+                    Live candlesticks · updates every 3s
                   </p>
                 </div>
                 <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-emerald-400">
@@ -1944,7 +1945,7 @@ function DashboardContent() {
                 aria-label="Close change password"
                 className="rounded-lg border border-border px-3 py-1.5 text-sm font-semibold text-muted-foreground hover:text-foreground disabled:opacity-50"
               >
-                âœ•
+                ✕
               </button>
             </div>
 
@@ -1988,7 +1989,7 @@ function DashboardContent() {
                 disabled={passwordBusy || !newPassword || !confirmPassword}
                 className="w-full rounded-lg bg-brand py-3 font-display font-bold text-primary-foreground shadow-glow disabled:cursor-not-allowed disabled:opacity-60"
               >
-                {passwordBusy ? "Updatingâ€¦" : "Update Password"}
+                {passwordBusy ? "Updating…" : "Update Password"}
               </button>
             </form>
           </div>
@@ -2022,7 +2023,7 @@ function DashboardContent() {
                 aria-label="Close edit phone number"
                 className="rounded-lg border border-border px-3 py-1.5 text-sm font-semibold text-muted-foreground hover:text-foreground disabled:opacity-50"
               >
-                âœ•
+                ✕
               </button>
             </div>
 
@@ -2047,7 +2048,7 @@ function DashboardContent() {
                 disabled={phoneBusy || !phoneInput.trim()}
                 className="w-full rounded-lg bg-brand py-3 font-display font-bold text-primary-foreground shadow-glow disabled:cursor-not-allowed disabled:opacity-60"
               >
-                {phoneBusy ? "Savingâ€¦" : "Save Phone Number"}
+                {phoneBusy ? "Saving…" : "Save Phone Number"}
               </button>
             </form>
           </div>
@@ -2081,7 +2082,7 @@ function DashboardContent() {
                 aria-label="Close wallet management"
                 className="rounded-lg border border-border px-3 py-1.5 text-sm font-semibold text-muted-foreground hover:text-foreground disabled:opacity-50"
               >
-                âœ•
+                ✕
               </button>
             </div>
 
@@ -2157,7 +2158,7 @@ function DashboardContent() {
                 disabled={walletBusy}
                 className="w-full rounded-lg bg-brand py-3 font-display font-bold text-primary-foreground shadow-glow disabled:cursor-not-allowed disabled:opacity-60"
               >
-                {walletBusy ? "Savingâ€¦" : "Save Wallets"}
+                {walletBusy ? "Saving…" : "Save Wallets"}
               </button>
             </form>
           </div>
@@ -2191,7 +2192,7 @@ function DashboardContent() {
                 aria-label="Close withdrawal"
                 className="rounded-lg border border-border px-3 py-1.5 text-sm font-semibold text-muted-foreground hover:text-foreground disabled:opacity-50"
               >
-                âœ•
+                <X className="h-4 w-4" />
               </button>
             </div>
 
@@ -2249,8 +2250,7 @@ function DashboardContent() {
                   className="w-full rounded-lg border bg-muted px-4 py-3 text-sm outline-none focus:border-primary"
                 />
                 <p className="text-xs text-muted-foreground">
-                  Min $50.00 Â· Max $200.00 Â· Available{" "}
-                  {money(availableWithdrawal)}
+                  Min $50.00 - Max $200.00
                 </p>
               </div>
 
@@ -2277,7 +2277,7 @@ function DashboardContent() {
                 </button>
               </div>
               <p className="text-center text-xs text-muted-foreground">
-                One withdrawal every 7 days. Requests need manual review.
+                One withdrawal every 7 days.
               </p>
             </form>
           </div>
@@ -2408,7 +2408,7 @@ function DashboardContent() {
                 aria-label="Close ad"
                 className="rounded-lg border border-border px-3 py-1.5 text-sm font-semibold text-muted-foreground hover:text-foreground disabled:opacity-50"
               >
-                âœ•
+                ✕
               </button>
             </div>
 
@@ -2424,7 +2424,7 @@ function DashboardContent() {
                   }`}
                 >
                   {videoDone
-                    ? "Video ad completed âœ“"
+                    ? "Video ad completed ✓"
                     : "Watch the video to the end to unlock your reward."}
                 </p>
               </section>
@@ -2463,7 +2463,7 @@ function DashboardContent() {
                   disabled={adClaiming}
                   className="w-full rounded-lg bg-brand py-3 font-display font-bold text-primary-foreground shadow-glow transition-transform hover:scale-[1.01] disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  {adClaiming ? "Claimingâ€¦" : "Claim $0.05"}
+                  {adClaiming ? "Claiming…" : "Claim $0.05"}
                 </button>
               ) : adTimerDone ? (
                 <p className="rounded-lg border border-dashed border-border px-3 py-3 text-sm text-muted-foreground">
