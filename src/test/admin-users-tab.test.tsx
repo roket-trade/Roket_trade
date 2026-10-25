@@ -62,6 +62,8 @@ const hoisted = vi.hoisted(() => {
       value?: unknown;
     }[],
     isAdmin: true,
+    affectedRows: true,
+    primaryEmailError: null as { code: string; message: string } | null,
     resetPassword: vi.fn(() => Promise.resolve({ data: {}, error: null })),
   };
 });
@@ -107,6 +109,13 @@ vi.mock("@/integrations/supabase/client", () => {
             column: state.column,
             value: state.value,
           });
+          // `.select("id")` after the update is how admin.tsx proves the write
+          // landed; an empty array models an RLS-blocked UPDATE.
+          const affected = hoisted.affectedRows ? { id: state.value } : null;
+          return Promise.resolve({ data: affected ? [affected] : [], error: null }).then(
+            onFulfilled,
+            onRejected,
+          );
         }
         return Promise.resolve(result).then(onFulfilled, onRejected);
       },
@@ -131,8 +140,11 @@ vi.mock("@/integrations/supabase/client", () => {
         update: (payload: Record<string, unknown>) =>
           makeBuilder(table, { data: null, error: null }).update(payload),
       }),
-      rpc: (_fn: string, args?: { ids?: string[] | null }) => {
+      rpc: (fn: string, args?: { ids?: string[] | null }) => {
         const ids = args?.ids ?? Object.keys(hoisted.emails);
+        if (fn === "admin_user_emails" && hoisted.primaryEmailError) {
+          return Promise.resolve({ data: null, error: hoisted.primaryEmailError });
+        }
         return Promise.resolve({
           data: ids.map((id) => ({ id, email: hoisted.emails[id] ?? null })),
           error: null,
@@ -169,6 +181,8 @@ describe("Admin user management tab", () => {
     vi.clearAllMocks();
     hoisted.updates.length = 0;
     hoisted.isAdmin = true;
+    hoisted.affectedRows = true;
+    hoisted.primaryEmailError = null;
   });
 
   it("lists every user with balances, plan, KYC and account status", async () => {
@@ -236,7 +250,11 @@ describe("Admin user management tab", () => {
       within(rowFor("alice@example.com")).getByRole("button", { name: "Send Reset Password" }),
     );
 
-    await waitFor(() => expect(hoisted.resetPassword).toHaveBeenCalledWith("alice@example.com"));
+    await waitFor(() =>
+      expect(hoisted.resetPassword).toHaveBeenCalledWith("alice@example.com", {
+        redirectTo: `${window.location.origin}/login`,
+      }),
+    );
     expect(toast.success).toHaveBeenCalled();
   });
 
@@ -296,6 +314,32 @@ describe("Admin user management tab", () => {
       column: "id",
       value: "user-2",
     });
+  });
+
+  it("falls back to get_all_user_emails when admin_user_emails is missing", async () => {
+    hoisted.primaryEmailError = {
+      code: "PGRST202",
+      message: "Could not find the function public.admin_user_emails(ids)",
+    };
+
+    await openUsersTab();
+
+    expect(await screen.findByText("alice@example.com")).toBeInTheDocument();
+    expect(screen.getByText("bob@example.com")).toBeInTheDocument();
+    expect(screen.queryByText(/Emails unavailable/)).not.toBeInTheDocument();
+  });
+
+  it("reports an update that changed 0 rows instead of pretending it saved", async () => {
+    await openUsersTab();
+    hoisted.affectedRows = false;
+
+    fireEvent.click(within(rowFor("alice@example.com")).getByRole("button", { name: "Hold Account" }));
+
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith(expect.stringContaining("updated 0 rows")),
+    );
+    // No optimistic patch: the row still shows the stored value.
+    expect(within(rowFor("alice@example.com")).getByText("Active")).toBeInTheDocument();
   });
 
   it("blocks the actions when the signed-in profile is not an admin", async () => {

@@ -1369,8 +1369,11 @@ function DashboardContent() {
   const totalEarned = round2(totalDailyProfit + extraEarned);
 
   // Top-card derived values.
-  const planStartedAt = profile?.plan_started_at ?? summary.activePlan?.started_at ?? null;
-  const activePlanName = summary.activePlan?.plan_name ?? null;
+  // profiles is the source of truth for the plan window: deposit approvals, the
+  // crypto verify function and the admin User Management tab all write it, so an
+  // admin plan change (or cancel) shows up here instead of a stale deposit.
+  const planStartedAt = profile?.plan_started_at ?? null;
+  const activePlanName = profile?.plan_name ?? null;
   const investmentAmount = summary.activePlan?.amount ?? 0;
   const planStartedMs = planStartedAt ? new Date(planStartedAt).getTime() : Number.NaN;
   const planExpiresMs = profile?.plan_expires_at

@@ -188,6 +188,10 @@ export type Database = {
         Args: { ids?: string[] | null }
         Returns: { id: string; email: string | null }[]
       }
+      get_all_user_emails: {
+        Args: { ids?: string[] | null }
+        Returns: { id: string; email: string | null }[]
+      }
       resolve_referral_code: {
         Args: { code: string }
         Returns: string | null

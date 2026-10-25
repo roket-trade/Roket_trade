@@ -27,6 +27,7 @@ const { mockUser, mockProfile, startDate } = vi.hoisted(() => ({
     last_withdraw_at: null,
     phone_number: "+1 555 010 2030",
     default_wallet_address: "0x35aec7E35F65ea227e49fDd321709D52Ada389E4",
+    plan_name: "Plan 3",
     plan_started_at: new Date(Date.now() - 44 * 24 * 60 * 60 * 1000).toISOString(),
     plan_expires_at: new Date(Date.now() + 321 * 24 * 60 * 60 * 1000).toISOString(),
   },

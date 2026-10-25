@@ -3,6 +3,7 @@ import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { toast } from "sonner";
 import { RequireAdmin } from "@/components/RequireAdmin";
 import { supabase } from "@/integrations/supabase/client";
+import type { TablesUpdate } from "@/integrations/supabase/types";
 
 export const Route = createFileRoute("/admin")({
   head: () => ({
@@ -106,6 +107,108 @@ async function assertAdmin(): Promise<string> {
   }
   return userId;
 }
+
+const logSupabaseError = (
+  action: string,
+  error: { code?: string; message?: string; details?: string; hint?: string },
+) => {
+  console.error(`[admin] ${action} failed:`, {
+    code: error.code,
+    message: error.message,
+    details: error.details,
+    hint: error.hint,
+  });
+};
+
+// admin_user_emails()/get_all_user_emails() return TABLE(id, email). PostgREST
+// normally ships plain objects, but a single-column composite can arrive
+// wrapped, so accept both shapes instead of silently dropping every row.
+const addEmailRows = (rows: unknown, into: Record<string, string>): number => {
+  if (!Array.isArray(rows)) return 0;
+  let added = 0;
+  for (const raw of rows) {
+    let row = raw as Record<string, unknown> | null;
+    if (row && typeof row === "object" && !("email" in row)) {
+      const nested = Object.values(row).find(
+        (value) => value && typeof value === "object" && "email" in (value as object),
+      );
+      if (nested) row = nested as Record<string, unknown>;
+    }
+    const id = typeof row?.["id"] === "string" ? row["id"] : null;
+    const email = typeof row?.["email"] === "string" ? row["email"] : null;
+    if (id && email) {
+      into[id] = email;
+      added += 1;
+    }
+  }
+  return added;
+};
+
+async function fetchEmails(
+  ids: string[],
+): Promise<{ map: Record<string, string>; error: string | null }> {
+  const map: Record<string, string> = {};
+  if (ids.length === 0) return { map, error: null };
+
+  const primary = await supabase.rpc("admin_user_emails", { ids });
+  if (primary.error) {
+    logSupabaseError("admin_user_emails RPC", primary.error);
+  } else {
+    const added = addEmailRows(primary.data, map);
+    console.log("[admin] admin_user_emails RPC", {
+      requested: ids.length,
+      returned: added,
+      sample: Array.isArray(primary.data) ? primary.data[0] : primary.data,
+    });
+  }
+
+  if (ids.every((id) => map[id])) return { map, error: null };
+
+  // Fallback for deployments where admin_user_emails() is missing or broken.
+  const fallback = await supabase.rpc("get_all_user_emails", { ids: null });
+  if (fallback.error) {
+    logSupabaseError("get_all_user_emails RPC", fallback.error);
+    return { map, error: fallback.error.message };
+  }
+  const added = addEmailRows(fallback.data, map);
+  console.log("[admin] get_all_user_emails RPC", { returned: added });
+  const missing = ids.filter((id) => !map[id]).length;
+  return {
+    map,
+    error:
+      missing > 0
+        ? `${missing} user email(s) unavailable — run supabase/migrations/20261029000000_admin_rls_and_emails.sql.`
+        : null,
+  };
+}
+
+// Update one profile as an admin and prove it happened. An RLS-blocked UPDATE
+// returns no error and changes 0 rows, which is why these actions used to look
+// silent; asking for the affected rows turns that into a real, visible error.
+async function updateProfile(
+  userId: string,
+  patch: TablesUpdate<"profiles">,
+  action: string,
+): Promise<void> {
+  console.log(`[admin] ${action}`, { userId, patch });
+  const { data, error } = await supabase
+    .from("profiles")
+    .update(patch)
+    .eq("id", userId)
+    .select("id");
+
+  if (error) {
+    logSupabaseError(`${action} (profiles update)`, error);
+    throw new Error(error.hint ? `${error.message} — ${error.hint}` : error.message);
+  }
+  if (!data || data.length === 0) {
+    console.error(`[admin] ${action}: Supabase updated 0 rows`, { userId, patch });
+    throw new Error(
+      "Supabase updated 0 rows — the admin RLS policy blocked it. Run supabase/migrations/20261029000000_admin_rls_and_emails.sql.",
+    );
+  }
+  console.log(`[admin] ${action}: profile updated`, { userId, columns: Object.keys(patch) });
+}
 function Admin() {
   return (
     <RequireAdmin>
@@ -122,6 +225,7 @@ function AdminContent() {
   const [kycUsers, setKycUsers] = useState<KycUser[]>([]);
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [emails, setEmails] = useState<Record<string, string>>({});
+  const [emailsError, setEmailsError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [busyUserId, setBusyUserId] = useState<string | null>(null);
@@ -180,20 +284,13 @@ function AdminContent() {
 
       if (ids.length === 0) {
         setEmails({});
+        setEmailsError(null);
         return;
       }
 
-      const { data: emailRows, error: emailErr } = await supabase.rpc("admin_user_emails", { ids });
-      if (emailErr) {
-        console.error("[admin] admin_user_emails RPC failed:", emailErr.code, emailErr.message, emailErr.details, emailErr.hint);
-        setEmails({});
-      } else {
-        const map: Record<string, string> = {};
-        for (const row of emailRows ?? []) {
-          if (row.email) map[row.id] = row.email;
-        }
-        setEmails(map);
-      }
+      const { map, error: emailError } = await fetchEmails(ids);
+      setEmails(map);
+      setEmailsError(emailError);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Couldn't load admin data.";
       console.error("[admin] load failed:", err);
@@ -228,23 +325,21 @@ function AdminContent() {
       // approved, so the dashboard can render "Day X / 365".
       const planStartedAt = new Date();
       const planExpiresAt = new Date(planStartedAt.getTime() + 365 * 24 * 60 * 60 * 1000);
-      let { error: bErr } = await supabase
-        .from("profiles")
-        .update({
-          main_balance: nextBal,
-          plan_started_at: planStartedAt.toISOString(),
-          plan_expires_at: planExpiresAt.toISOString(),
-        })
-        .eq("id", tx.user_id);
-      // Tolerate databases that have not run the dashboard profile migration
-      // yet: the balance credit must still succeed.
-      if (bErr && /column .*plan_(started|expires)_at/i.test(bErr.message)) {
-        ({ error: bErr } = await supabase
-          .from("profiles")
-          .update({ main_balance: nextBal })
-          .eq("id", tx.user_id));
+      const planPatch = {
+        main_balance: nextBal,
+        ...(tx.plan_name ? { plan_name: tx.plan_name } : {}),
+        plan_started_at: planStartedAt.toISOString(),
+        plan_expires_at: planExpiresAt.toISOString(),
+      };
+      try {
+        await updateProfile(tx.user_id, planPatch, "approve deposit (balance + plan)");
+      } catch (err) {
+        // Tolerate databases that have not run the dashboard profile migration
+        // yet: the balance credit must still succeed.
+        const message = err instanceof Error ? err.message : "";
+        if (!/plan_name|plan_(started|expires)_at/i.test(message)) throw err;
+        await updateProfile(tx.user_id, { main_balance: nextBal }, "approve deposit (balance only)");
       }
-      if (bErr) throw bErr;
       const refId = (up as { referred_by?: string | null }).referred_by;
       if (refId) {
         const bonus = Math.round(credit * 0.1 * 100) / 100;
@@ -342,8 +437,8 @@ function AdminContent() {
   const setKyc = async (userId: string, status: "verified" | "rejected") => {
     setBusyId(userId);
     try {
-      const { error } = await supabase.from("profiles").update({ kyc_status: status }).eq("id", userId);
-      if (error) throw error;
+      await assertAdmin();
+      await updateProfile(userId, { kyc_status: status }, `KYC ${status}`);
       setKycUsers((u) => u.filter((x) => x.id !== userId));
       setUsers((list) => list.map((u) => (u.id === userId ? { ...u, kyc_status: status } : u)));
       toast.success(`KYC ${status}.`);
@@ -364,11 +459,7 @@ function AdminContent() {
     setBusyUserId(user.id);
     try {
       await assertAdmin();
-      const { error } = await supabase
-        .from("profiles")
-        .update({ last_withdraw_at: null })
-        .eq("id", user.id);
-      if (error) throw error;
+      await updateProfile(user.id, { last_withdraw_at: null }, "reset withdraw limit");
       patchUser(user.id, { last_withdraw_at: null });
       toast.success(`Withdraw limit reset for ${label(user)}.`);
     } catch (err) {
@@ -383,9 +474,30 @@ function AdminContent() {
     try {
       await assertAdmin();
       const email = emails[user.id];
-      if (!email) throw new Error("No email address on file for this user.");
-      const { error } = await supabase.auth.resetPasswordForEmail(email);
-      if (error) throw error;
+      if (!email) {
+        throw new Error(
+          "No email address on file for this user. Run supabase/migrations/20261029000000_admin_rls_and_emails.sql so the admin email RPC works.",
+        );
+      }
+      // No /update-password route exists yet, so the recovery link lands on
+      // /login. Supabase also requires this exact URL in Auth > URL Configuration.
+      const redirectTo =
+        typeof window !== "undefined" ? `${window.location.origin}/login` : undefined;
+      const { error } = await supabase.auth.resetPasswordForEmail(
+        email,
+        redirectTo ? { redirectTo } : undefined,
+      );
+      if (error) {
+        console.error("[admin] resetPasswordForEmail failed:", {
+          email,
+          redirectTo,
+          status: error.status,
+          code: error.code,
+          message: error.message,
+        });
+        throw new Error(error.message);
+      }
+      console.log("[admin] resetPasswordForEmail sent", { email, redirectTo });
       toast.success(`Password reset email sent to ${email}.`);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Couldn't send the reset email.");
@@ -400,8 +512,7 @@ function AdminContent() {
       const adminId = await assertAdmin();
       if (user.id === adminId) throw new Error("You can't hold your own account.");
       const next = !user.is_suspended;
-      const { error } = await supabase.from("profiles").update({ is_suspended: next }).eq("id", user.id);
-      if (error) throw error;
+      await updateProfile(user.id, { is_suspended: next }, next ? "hold account" : "unhold account");
       patchUser(user.id, { is_suspended: next });
       toast.success(next ? `${label(user)} held.` : `${label(user)} released.`);
     } catch (err) {
@@ -432,8 +543,7 @@ function AdminContent() {
             plan_expires_at: new Date(now.getTime() + 365 * 24 * 60 * 60 * 1000).toISOString(),
           }
         : { plan_name: null, plan_started_at: null, plan_expires_at: null };
-      const { error } = await supabase.from("profiles").update(patch).eq("id", target.id);
-      if (error) throw error;
+      await updateProfile(target.id, patch, planName ? `update plan (${planName})` : "cancel plan");
       patchUser(target.id, patch);
       setPlanUser(null);
       toast.success(planName ? `Plan updated to ${planName}.` : "Plan cancelled.");
@@ -473,8 +583,7 @@ function AdminContent() {
         is_admin: editDraft.isAdmin,
         kyc_status: editDraft.kyc,
       };
-      const { error } = await supabase.from("profiles").update(patch).eq("id", target.id);
-      if (error) throw error;
+      await updateProfile(target.id, patch, "edit balances/KYC");
       patchUser(target.id, patch);
       setEditUser(null);
       toast.success(`Saved changes for ${label(target)}.`);
@@ -570,6 +679,11 @@ function AdminContent() {
                 {filteredUsers.length} of {users.length} users
               </span>
             </div>
+            {emailsError && (
+              <p className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
+                Emails unavailable: {emailsError}
+              </p>
+            )}
             <div className="overflow-hidden rounded-2xl border bg-card">
               <div className="overflow-x-auto"><table className="w-full min-w-[1080px] text-left text-sm">
                 <thead><tr className="border-b border-border/70 text-xs uppercase tracking-widest text-muted-foreground">
