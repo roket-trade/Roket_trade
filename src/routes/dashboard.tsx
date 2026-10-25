@@ -157,7 +157,6 @@ function profileWallets(profile: Profile | null): SavedWallets {
   return wallets;
 }
 
-
 /** Sum every completed deposit for the user (their total placed capital). */
 function sumDeposits(
   rows: Array<{ deposit_amount?: number | string | null }> | null,
