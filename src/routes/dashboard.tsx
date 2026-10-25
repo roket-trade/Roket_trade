@@ -20,6 +20,8 @@ import { toast } from "sonner";
 import { AdsterraBanner } from "@/components/AdsterraBanner";
 import { HilltopVideoAd } from "@/components/HilltopVideoAd";
 import { KycModal } from "@/components/KycModal";
+import { SupportModal } from "@/components/SupportModal";
+import { AccountSuspendedOverlay } from "@/components/AccountSuspendedOverlay";
 import { RequireAuth } from "@/components/RequireAuth";
 import { supabase } from "@/integrations/supabase/client";
 import type { Tables } from "@/integrations/supabase/types";
@@ -875,6 +877,7 @@ function DashboardContent() {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
+  const [supportOpen, setSupportOpen] = useState(false);
   const [profileError, setProfileError] = useState("");
   const [refreshingProfile, setRefreshingProfile] = useState(false);
   const requestId = useRef(0);
@@ -1662,6 +1665,16 @@ function DashboardContent() {
           }
         />
       )}
+      {user && (
+        <SupportModal open={supportOpen} onOpenChange={setSupportOpen} userId={user.id} />
+      )}
+      {profile?.is_suspended && (
+        <AccountSuspendedOverlay
+          open
+          onSignOut={() => void signOut()}
+          onContactSupport={() => setSupportOpen(true)}
+        />
+      )}
 
       <main className="mx-auto max-w-5xl px-4 py-10">
         {!loading && !profileLoaded && (
@@ -1942,13 +1955,14 @@ function DashboardContent() {
                     </a>
                   </li>
                   <li>
-                    <a
-                      href="mailto:info@roket.bond?subject=Support%20Ticket"
-                      className="flex items-center gap-3 rounded-lg px-2 py-2 text-sm text-muted-foreground transition hover:bg-gray-950/60 hover:text-emerald-400"
+                    <button
+                      type="button"
+                      onClick={() => setSupportOpen(true)}
+                      className="flex w-full items-center gap-3 rounded-lg px-2 py-2 text-sm text-muted-foreground transition hover:bg-gray-950/60 hover:text-emerald-400"
                     >
                       <Ticket className="h-4 w-4 text-emerald-400" aria-hidden="true" />
                       <span>Submit A Ticket</span>
-                    </a>
+                    </button>
                   </li>
                   <li>
                     <a

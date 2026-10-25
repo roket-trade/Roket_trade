@@ -122,6 +122,39 @@ export type Database = {
         }
         Relationships: []
       }
+      support_tickets: {
+        Row: {
+          admin_response: string | null
+          created_at: string
+          id: string
+          message: string
+          resolved_at: string | null
+          status: string
+          subject: string
+          user_id: string | null
+        }
+        Insert: {
+          admin_response?: string | null
+          created_at?: string
+          id?: string
+          message: string
+          resolved_at?: string | null
+          status?: string
+          subject: string
+          user_id?: string | null
+        }
+        Update: {
+          admin_response?: string | null
+          created_at?: string
+          id?: string
+          message?: string
+          resolved_at?: string | null
+          status?: string
+          subject?: string
+          user_id?: string | null
+        }
+        Relationships: []
+      }
       transactions: {
         Row: {
           amount: number
@@ -187,6 +220,14 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      delete_user: {
+        Args: { target_user_id: string }
+        Returns: undefined
+      }
+      admin_delete_user: {
+        Args: { target_user_id: string }
+        Returns: undefined
+      }
       admin_user_emails: {
         Args: { ids?: string[] | null }
         Returns: { id: string; email: string | null }[]

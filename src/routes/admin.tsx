@@ -52,7 +52,17 @@ type AdminUser = {
   created_at: string;
 };
 
-type Tab = "deposits" | "users" | "withdrawals" | "kyc";
+type SupportTicket = {
+  id: string;
+  user_id: string | null;
+  subject: string;
+  message: string;
+  status: string;
+  created_at: string;
+  admin_response?: string | null;
+};
+
+type Tab = "deposits" | "users" | "withdrawals" | "kyc" | "support";
 
 // Money EARNED per user, aggregated from transactions — deposits are never part
 // of these figures. `adjustment` is the manual correction an admin can make
@@ -348,6 +358,7 @@ function AdminContent() {
   const [withdrawals, setWithdrawals] = useState<Tx[]>([]);
   const [kycUsers, setKycUsers] = useState<KycUser[]>([]);
   const [users, setUsers] = useState<AdminUser[]>([]);
+  const [supportTickets, setSupportTickets] = useState<SupportTicket[]>([]);
   const [emails, setEmails] = useState<Record<string, string>>({});
   const [emailsError, setEmailsError] = useState<string | null>(null);
   const [aggregates, setAggregates] = useState<Record<string, UserAggregate>>({});
@@ -387,12 +398,13 @@ function AdminContent() {
       // Earnings aggregates are fetched in the same Promise.all: one
       // admin_user_aggregates() RPC covers every user row, so the tab needs a
       // single extra round-trip rather than a query per user.
-      const [dep, wd, kyc, userRows, agg] = await Promise.all([
+      const [dep, wd, kyc, userRows, agg, support] = await Promise.all([
         supabase.from("transactions").select(TX_COLS).eq("type", "deposit").eq("status", "pending").order("created_at"),
         supabase.from("transactions").select(TX_COLS).eq("type", "withdrawal").eq("status", "pending").order("created_at"),
         supabase.from("profiles").select("id,full_name,kyc_status,id_card_url,created_at").eq("kyc_status", "pending").order("created_at"),
         fetchAdminUsers(),
         fetchUserAggregates(),
+        supabase.from("support_tickets").select("*").order("created_at", { ascending: false }),
       ]);
       if (dep.error) {
         console.error("[admin] deposits fetch error:", dep.error.code, dep.error.message, dep.error.details, dep.error.hint);
@@ -413,6 +425,7 @@ function AdminContent() {
       setWithdrawals(wds);
       setKycUsers(kycRows);
       setUsers(userRows);
+      setSupportTickets(((support as { data?: unknown[] })?.data ?? []) as SupportTicket[]);
       setAggregates(agg.map);
       setAggregatesError(agg.error);
 
@@ -689,7 +702,31 @@ function AdminContent() {
     }
   };
 
-  const openPlanModal = (user: AdminUser) => {
+  const resolveTicket = async (id: string) => {
+    try {
+      const { error } = await supabase.from("support_tickets").update({ status: "resolved" }).eq("id", id);
+      if (error) throw error;
+      setSupportTickets((prev) => prev.map((t) => (t.id === id ? { ...t, status: "resolved" } : t)));
+      toast.success("Ticket resolved.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't resolve ticket.");
+    }
+  };
+  const deleteUser = async (user: AdminUser) => {
+    if (!confirm(`Delete ${label(user)} permanently?`)) return;
+    setBusyUserId(user.id);
+    try {
+      const { error } = await supabase.rpc("admin_delete_user", { target_user_id: user.id });
+      if (error) throw error;
+      setUsers((prev) => prev.filter((u) => u.id !== user.id));
+      toast.success(`${label(user)} deleted.`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't delete user.");
+    } finally {
+      setBusyUserId(null);
+    }
+  };
+const openPlanModal = (user: AdminUser) => {
     const current = user.plan_name ?? "none";
     setPlanPick((PLANS as readonly string[]).includes(current) ? current : "none");
     setPlanUser(user);
@@ -893,6 +930,7 @@ function AdminContent() {
     { id: "users", label: "Users", count: users.length },
     { id: "withdrawals", label: "Pending Withdrawals", count: withdrawals.length },
     { id: "kyc", label: "KYC Verifications", count: kycUsers.length },
+    { id: "support", label: "Support Tickets", count: supportTickets.length },
   ];
 
   const filteredUsers = useMemo(() => {
@@ -1082,6 +1120,29 @@ function AdminContent() {
             </table></div>
           </section>
         )}
+        {tab === "support" && (
+          <section className="overflow-hidden rounded-2xl border bg-card">
+            <div className="overflow-x-auto"><table className="w-full min-w-[680px] text-left text-sm">
+              <thead><tr className="border-b border-border/70 text-xs uppercase tracking-widest text-muted-foreground">
+                <th className="px-4 py-3">User</th><th className="px-4 py-3">Subject</th><th className="px-4 py-3">Message</th><th className="px-4 py-3">Status</th><th className="px-4 py-3 text-right">Actions</th>
+              </tr></thead>
+              <tbody>
+                {supportTickets.length === 0 && (<tr><td colSpan={5} className="px-4 py-10 text-center text-muted-foreground">No support tickets.</td></tr>)}
+                {supportTickets.map((t) => (
+                  <tr key={t.id} className="border-b border-border/40 last:border-0">
+                    <td className="px-4 py-3 font-medium">{t.user_id ? (emails[t.user_id] ?? short(t.user_id, 10)) : "—"}</td>
+                    <td className="px-4 py-3">{t.subject}</td>
+                    <td className="px-4 py-3 max-w-xs truncate">{t.message}</td>
+                    <td className="px-4 py-3">{t.status}</td>
+                    <td className="px-4 py-3"><div className="flex justify-end gap-2">
+                      <button type="button" disabled={t.status === "resolved"} onClick={() => void resolveTicket(t.id)} className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-emerald-500 disabled:opacity-50">Resolve</button>
+                    </div></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table></div>
+          </section>
+        )}
         </div>
         {actionsFor && (() => {
           const target = users.find((u) => u.id === actionsFor.userId);
@@ -1095,6 +1156,7 @@ function AdminContent() {
                 <button type="button" disabled={busyUserId === target.id} onClick={() => { closeActions(); void resetWithdrawLimit(target); }} className={itemClass}>Reset Withdraw Limit</button>
                 <button type="button" disabled={busyUserId === target.id} onClick={() => { closeActions(); void sendPasswordReset(target); }} className={itemClass}>Send Reset Password</button>
                 <button type="button" disabled={busyUserId === target.id} onClick={() => { closeActions(); void toggleSuspend(target); }} className={itemClass}>{target.is_suspended ? "Unhold Account" : "Hold Account"}</button>
+                <button type="button" disabled={busyUserId === target.id} onClick={() => { closeActions(); void deleteUser(target); }} className={itemClass}>Delete User</button>
                 <button type="button" disabled={busyUserId === target.id} onClick={() => { closeActions(); openPlanModal(target); }} className={itemClass}>Manage Plan</button>
                 <button type="button" disabled={busyUserId === target.id} onClick={() => { closeActions(); openEditModal(target); }} className={itemClass}>Edit Balances &amp; KYC</button>
               </div>
