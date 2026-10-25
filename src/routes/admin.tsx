@@ -479,10 +479,11 @@ function AdminContent() {
           "No email address on file for this user. Run supabase/migrations/20261029000000_admin_rls_and_emails.sql so the admin email RPC works.",
         );
       }
-      // No /update-password route exists yet, so the recovery link lands on
-      // /login. Supabase also requires this exact URL in Auth > URL Configuration.
+      // The recovery link lands on /update-password, which turns the token into
+      // a session and lets the user pick a new password. Supabase also requires
+      // this exact URL in Auth > URL Configuration.
       const redirectTo =
-        typeof window !== "undefined" ? `${window.location.origin}/login` : undefined;
+        typeof window !== "undefined" ? `${window.location.origin}/update-password` : undefined;
       const { error } = await supabase.auth.resetPasswordForEmail(
         email,
         redirectTo ? { redirectTo } : undefined,

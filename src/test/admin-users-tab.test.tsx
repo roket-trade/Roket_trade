@@ -252,7 +252,7 @@ describe("Admin user management tab", () => {
 
     await waitFor(() =>
       expect(hoisted.resetPassword).toHaveBeenCalledWith("alice@example.com", {
-        redirectTo: `${window.location.origin}/login`,
+        redirectTo: `${window.location.origin}/update-password`,
       }),
     );
     expect(toast.success).toHaveBeenCalled();

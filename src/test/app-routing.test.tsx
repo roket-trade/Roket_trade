@@ -23,6 +23,12 @@ describe("App routing", () => {
     expect(matches.at(-1)?.routeId).toBe("/checkout");
   });
 
+  it("matches the public password recovery route", () => {
+    const router = createRouter({ routeTree, context: { queryClient: new QueryClient() } });
+
+    expect(router.matchRoutes("/update-password").at(-1)?.routeId).toBe("/update-password");
+  });
+
   it("matches the legal routes", () => {
     const router = createRouter({ routeTree, context: { queryClient: new QueryClient() } });
 
