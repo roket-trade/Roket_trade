@@ -59,7 +59,7 @@ type SupportTicket = {
   message: string;
   status: string;
   created_at: string;
-  admin_response?: string | null;
+  admin_reply?: string | null;
   category?: string | null;
   image_url?: string | null;
 };
@@ -711,7 +711,7 @@ function AdminContent() {
 
   const openReplyModal = (ticket: SupportTicket) => {
     setReplyTicket(ticket);
-    setReplyDraft(ticket.admin_response ?? "");
+    setReplyDraft(ticket.admin_reply ?? "");
   };
 
   const sendReplyAndResolve = async () => {
@@ -720,12 +720,12 @@ function AdminContent() {
     try {
       const { error } = await supabase
         .from("support_tickets")
-        .update({ admin_response: replyDraft, status: "resolved" })
+        .update({ admin_reply: replyDraft, status: "resolved" })
         .eq("id", replyTicket.id);
       if (error) throw error;
       setSupportTickets((prev) =>
         prev.map((t) =>
-          t.id === replyTicket.id ? { ...t, admin_response: replyDraft, status: "resolved" } : t,
+          t.id === replyTicket.id ? { ...t, admin_reply: replyDraft, status: "resolved" } : t,
         ),
       );
       toast.success("Reply sent and ticket resolved.");

@@ -14,7 +14,7 @@ type TicketRow = {
   subject: string;
   message: string;
   status: string;
-  admin_response: string | null;
+  admin_reply: string | null;
   created_at: string;
   resolved_at: string | null;
   category: string | null;
@@ -225,10 +225,10 @@ export function SupportModal({ open, isOpen, onOpenChange, onClose, userId }: Pr
                     {statusBadge(t.status)}
                   </div>
                   <div className="text-sm text-muted-foreground whitespace-pre-wrap">{t.message}</div>
-                  {t.admin_response && (
+                  {t.admin_reply && (
                     <div className="rounded-md bg-muted p-2 text-sm">
                       <div className="mb-1 text-xs font-semibold text-muted-foreground">Admin response</div>
-                      <div className="whitespace-pre-wrap">{t.admin_response}</div>
+                      <div className="whitespace-pre-wrap">{t.admin_reply}</div>
                     </div>
                   )}
                   <div className="text-xs text-muted-foreground">
