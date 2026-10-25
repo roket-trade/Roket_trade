@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
-import { Loader2, Plus, Ticket, Clock, CheckCircle2, MessageSquare } from "lucide-react";
+import { Loader2, Plus, Ticket, Clock, CheckCircle2, MessageSquare, Shield } from "lucide-react";
 
 type TicketRow = {
   id: string;
@@ -117,6 +117,16 @@ export function SupportModal({ open, isOpen, onOpenChange, onClose, userId }: Pr
         message: m,
       });
       if (error) throw error;
+      // Reopen ticket when user replies so admin knows to check.
+      const { error: statusError } = await supabase
+        .from("support_tickets")
+        .update({ status: "open" })
+        .eq("id", selectedTicket.id);
+      if (statusError) throw statusError;
+      setSelectedTicket({ ...selectedTicket, status: "open" });
+      setTickets((prev) =>
+        prev.map((t) => (t.id === selectedTicket.id ? { ...t, status: "open" } : t)),
+      );
       setReplyDraft("");
       await fetchTicketMessages(selectedTicket.id);
     } catch (e: any) {
@@ -320,10 +330,13 @@ export function SupportModal({ open, isOpen, onOpenChange, onClose, userId }: Pr
               {statusBadge(selectedTicket.status)}
             </div>
             <div className="flex-1 space-y-3 overflow-y-auto rounded-lg border bg-muted/30 p-3 min-h-[200px]">
-              <div className="flex justify-start">
-                <div className="max-w-[80%] rounded-lg bg-background border px-3 py-2 text-sm">
+              <div className="flex justify-end">
+                <div className="max-w-[80%] rounded-lg bg-emerald-600 px-3 py-2 text-sm text-white">
+                  <div className="mb-1 flex items-center gap-1 text-xs font-semibold">
+                    You
+                  </div>
                   <div className="whitespace-pre-wrap">{selectedTicket.message}</div>
-                  <div className="mt-1 text-[10px] text-muted-foreground">
+                  <div className="mt-1 text-[10px] text-white/70">
                     {new Date(selectedTicket.created_at).toLocaleString()}
                   </div>
                 </div>
@@ -337,9 +350,23 @@ export function SupportModal({ open, isOpen, onOpenChange, onClose, userId }: Pr
                   const isUser = msg.sender_id === uid;
                   return (
                     <div key={msg.id} className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
-                      <div className={`max-w-[80%] rounded-lg px-3 py-2 text-sm ${isUser ? "bg-primary text-primary-foreground" : "bg-background border"}`}>
+                      <div
+                        className={`max-w-[80%] rounded-lg px-3 py-2 text-sm ${
+                          isUser ? "bg-emerald-600 text-white" : "bg-gray-800 text-gray-200"
+                        }`}
+                      >
+                        <div className="mb-1 flex items-center gap-1 text-xs font-semibold">
+                          {isUser ? (
+                            "You"
+                          ) : (
+                            <>
+                              <Shield className="h-3 w-3" />
+                              Roket Support
+                            </>
+                          )}
+                        </div>
                         <div className="whitespace-pre-wrap">{msg.message}</div>
-                        <div className={`mt-1 text-[10px] ${isUser ? "text-primary-foreground/70" : "text-muted-foreground"}`}>
+                        <div className={`mt-1 text-[10px] ${isUser ? "text-white/70" : "text-gray-400"}`}>
                           {new Date(msg.created_at).toLocaleString()}
                         </div>
                       </div>

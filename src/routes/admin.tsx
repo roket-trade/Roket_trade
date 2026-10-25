@@ -761,7 +761,17 @@ function AdminContent() {
         message: m,
       });
       if (error) throw error;
+      // Mark ticket as replied when admin responds.
+      const { error: statusError } = await supabase
+        .from("support_tickets")
+        .update({ status: "replied" })
+        .eq("id", replyTicket.id);
+      if (statusError) throw statusError;
       setReplyDraft("");
+      setSupportTickets((prev) =>
+        prev.map((t) => (t.id === replyTicket.id ? { ...t, status: "replied" } : t)),
+      );
+      setReplyTicket({ ...replyTicket, status: "replied" });
       await fetchTicketMessages(replyTicket.id);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Couldn't send message.");
@@ -1428,8 +1438,8 @@ const openPlanModal = (user: AdminUser) => {
                   id="admin-reply"
                   value={replyDraft}
                   onChange={(e) => setReplyDraft(e.target.value)}
-                  rows={3}
-                  className="w-full rounded-lg border border-border bg-muted/70 px-4 py-3 text-sm text-foreground outline-none transition-colors focus:border-primary focus:ring-2 focus:ring-primary/20"
+                  rows={4}
+                  className="min-h-[100px] w-full rounded-lg border border-border bg-muted/70 px-4 py-3 text-sm text-foreground outline-none transition-colors focus:border-primary focus:ring-2 focus:ring-primary/20"
                   placeholder="Type a message..."
                 />
                 <div className="flex justify-end gap-2">
