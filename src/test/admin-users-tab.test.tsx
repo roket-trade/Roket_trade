@@ -159,6 +159,21 @@ const hoisted = vi.hoisted(() => {
       status: "rejected",
       created_at: "2026-02-01T07:00:00.000Z",
     },
+    {
+      // Some rows store the withdrawal without a sign; it must still read as an
+      // outflow (red, negative).
+      id: "all-5",
+      user_id: "user-2",
+      type: "withdrawal",
+      amount: 30,
+      deposit_amount: null,
+      plan_name: "Withdraw to SOL",
+      network: "SOL",
+      wallet_address: "3mjR",
+      tx_hash: "wd-positive-sign",
+      status: "completed",
+      created_at: "2026-01-31T06:00:00.000Z",
+    },
   ];
 
   // Fixtures for the no-RPC fallback path (batched queries).
@@ -700,7 +715,7 @@ describe("Admin panel layout and All Transactions tab", () => {
 
     // Emails resolve through the admin_user_emails RPC because profiles has no
     // email column to embed.
-    expect((await screen.findAllByText("bob@example.com")).length).toBe(2);
+    expect((await screen.findAllByText("bob@example.com")).length).toBe(3);
 
     const bonus = screen.getByText("Referral Bonus").closest("tr") as HTMLTableRowElement;
     expect(within(bonus).getByText("bob@example.com")).toBeInTheDocument();
@@ -722,13 +737,20 @@ describe("Admin panel layout and All Transactions tab", () => {
 
     const deposit = screen.getByText("0xabcdef123456…").closest("tr") as HTMLTableRowElement;
     expect(within(deposit).getByText("$500.00")).toHaveClass("text-emerald-400");
+
+    // A withdrawal stored without a sign still renders as a negative outflow.
+    const unsignedWithdrawal = screen.getByText("-$30.00");
+    expect(unsignedWithdrawal).toHaveClass("text-destructive");
+    expect(
+      within(unsignedWithdrawal.closest("tr") as HTMLTableRowElement).getByText("completed"),
+    ).toBeInTheDocument();
   });
 
   it("counts the loaded transactions in the sidebar tab", async () => {
     await openTransactionsTab();
 
     expect(
-      await screen.findByRole("button", { name: "All Transactions (4)" }),
+      await screen.findByRole("button", { name: "All Transactions (5)" }),
     ).toBeInTheDocument();
   });
 });

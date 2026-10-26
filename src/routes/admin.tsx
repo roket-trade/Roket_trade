@@ -142,12 +142,19 @@ const txTypeLabel = (type: string) =>
   TX_TYPE_LABELS[type] ?? type.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 
 // Badges shared by the All Transactions / inline tables.
-const statusBadgeClass = (status: string) =>
-  status === "completed"
-    ? "rounded-full bg-emerald-500/15 px-2.5 py-1 text-xs font-semibold text-emerald-400"
-    : status === "pending"
-      ? "rounded-full bg-amber-500/15 px-2.5 py-1 text-xs font-semibold text-amber-400"
-      : "rounded-full bg-destructive/15 px-2.5 py-1 text-xs font-semibold text-destructive";
+const statusBadgeClass = (status: string) => {
+  if (status === "completed") {
+    return "rounded-full bg-emerald-500/15 px-2.5 py-1 text-xs font-semibold text-emerald-400";
+  }
+  if (status === "pending") {
+    return "rounded-full bg-amber-500/15 px-2.5 py-1 text-xs font-semibold text-amber-400";
+  }
+  if (status === "rejected" || status === "failed") {
+    return "rounded-full bg-destructive/15 px-2.5 py-1 text-xs font-semibold text-destructive";
+  }
+  // Anything else (approved, processing, …) is neutral rather than an error.
+  return "rounded-full bg-muted px-2.5 py-1 text-xs font-semibold text-muted-foreground";
+};
 
 const formatDateTime = (value: string) => {
   const date = new Date(value);
@@ -201,7 +208,17 @@ async function fetchAllTransactions(): Promise<AllTx[]> {
       profilesEmailEmbedAvailable = true;
       return (embedded.data ?? []) as unknown as AllTx[];
     }
-    profilesEmailEmbedAvailable = false;
+    // Only a schema-level rejection (missing column / relationship) is
+    // permanent; a transient failure should be retried on the next open.
+    const code = embedded.error.code ?? "";
+    if (
+      code === "PGRST200" ||
+      code === "PGRST204" ||
+      code === "42703" ||
+      /does not exist|relationship/i.test(embedded.error.message ?? "")
+    ) {
+      profilesEmailEmbedAvailable = false;
+    }
     console.warn(
       "[admin] transactions → profiles(email) embed unavailable, using the email RPC:",
       embedded.error.message,
@@ -613,10 +630,13 @@ function AdminContent() {
         ),
       ];
       if (missing.length > 0) {
-        const { map } = await fetchEmails(missing);
+        const { map, error: emailError } = await fetchEmails(missing);
         if (Object.keys(map).length > 0) {
           setEmails((prev) => ({ ...prev, ...map }));
         }
+        // Surface a broken email RPC on this tab too, otherwise rows quietly
+        // fall back to truncated user ids.
+        if (emailError) setEmailsError(emailError);
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Couldn't load transactions.";
@@ -1270,6 +1290,7 @@ const openPlanModal = (user: AdminUser) => {
                   <button type="button" onClick={() => void loadTransactions()} disabled={allTxLoading} className="rounded-lg border border-border px-4 py-2.5 text-sm font-semibold text-muted-foreground hover:text-foreground disabled:opacity-50">{allTxLoading ? "Loading…" : "Reload"}</button>
                 </div>
                 {allTxError && (<p className="rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">Couldn&apos;t load transactions: {allTxError}</p>)}
+              {emailsError && (<p className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">Emails unavailable: {emailsError}</p>)}
                 <div className="overflow-hidden rounded-2xl border bg-card">
                   <div className="overflow-x-auto"><table className="w-full min-w-[860px] text-left text-sm">
                     <thead><tr className="border-b border-border/70 text-xs uppercase tracking-widest text-muted-foreground">
@@ -1280,8 +1301,11 @@ const openPlanModal = (user: AdminUser) => {
                       {allTxLoading && allTransactions.length === 0 && (<tr><td colSpan={6} className="px-4 py-10 text-center text-muted-foreground">Loading transactions…</td></tr>)}
                       {!allTxLoading && allTransactions.length === 0 && (<tr><td colSpan={6} className="px-4 py-10 text-center text-muted-foreground">{allTxError ? "Transactions unavailable." : "No transactions yet."}</td></tr>)}
                       {allTransactions.map((tx) => {
-                        const amount = asNumber(tx.amount);
-                        const negative = amount < 0 || tx.type === "withdrawal";
+                        const rawAmount = asNumber(tx.amount);
+                        // Withdrawals always read as an outflow, even if a row
+                        // was stored without the sign.
+                        const amount = tx.type === "withdrawal" ? -Math.abs(rawAmount) : rawAmount;
+                        const negative = amount < 0;
                         const showsHash = tx.type === "deposit" || tx.type === "withdrawal";
                         return (
                           <tr key={tx.id} className="border-b border-border/40 last:border-0">
