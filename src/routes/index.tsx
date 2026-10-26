@@ -24,11 +24,7 @@ const plans: Plan[] = [
   { name: "Plan 4", deposit: 250, daily: 8, adsRewards: true },
 ];
 
-const planFeatures = [
-  "Daily profit for 365 days",
-  "10% referral bonus",
-  "Secure withdrawals every 7 days",
-];
+const planFeatures = ["Daily profit for 365 days", "10% referral bonus", "Secure withdrawals"];
 
 const navLinks = [
   { href: "#how-it-works", label: "How It Works" },
@@ -44,13 +40,13 @@ export const Route = createFileRoute("/")({
       {
         name: "description",
         content:
-          "Automated crypto trading plans from $60. Deposit USDT on BEP20 or Solana, earn daily profit for 365 days and withdraw every 7 days.",
+          "Automated crypto trading plans from $60. Deposit USDT on BEP20 or Solana and earn daily profit for 365 days.",
       },
       { property: "og:title", content: "Roket — Automated Crypto Trading Platform" },
       {
         property: "og:description",
         content:
-          "Automated crypto trading plans from $60. Deposit USDT on BEP20 or Solana, earn daily profit for 365 days and withdraw every 7 days.",
+          "Automated crypto trading plans from $60. Deposit USDT on BEP20 or Solana and earn daily profit for 365 days.",
       },
     ],
   }),
@@ -113,10 +109,6 @@ function Index() {
           <h1 className="text-5xl font-bold leading-tight md:text-6xl">
             Automated <span className="text-brand">Crypto Trading</span> Platform
           </h1>
-          <p className="mt-5 text-lg text-muted-foreground">
-            Verified USDT deposits, four fixed daily-profit plans and payouts every 7 days — fully
-            automated from your first deposit.
-          </p>
           <Link
             to={user ? "/dashboard" : "/signup"}
             className={`${cta} mt-8`}
@@ -145,7 +137,7 @@ function Index() {
           {plans.map((p, i) => (
             <div
               key={p.name}
-              className={`relative flex flex-col rounded-2xl border bg-card p-6 ${
+              className={`relative flex h-full flex-col rounded-2xl border bg-card p-6 ${
                 p.popular ? "border-primary shadow-glow ring-1 ring-primary/40 lg:-mt-3" : ""
               }`}
             >
@@ -182,7 +174,7 @@ function Index() {
                 </div>
               </dl>
 
-              <ul className="mt-5 space-y-2 border-t pt-5 text-sm">
+              <ul className="mb-6 mt-5 space-y-2 border-t pt-5 text-sm">
                 {(p.adsRewards ? [...planFeatures, "Watch Ads & Earn unlocked"] : planFeatures).map(
                   (f) => (
                     <li key={f} className="flex items-center gap-2">
@@ -193,7 +185,7 @@ function Index() {
                 )}
               </ul>
 
-              <Link to="/checkout" search={{ plan: i + 1 }} className={`${cta} mt-6 w-full`}>
+              <Link to="/checkout" search={{ plan: i + 1 }} className={`${cta} mt-auto w-full`}>
                 Choose Plan
               </Link>
             </div>

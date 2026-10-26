@@ -33,11 +33,11 @@ export function Footer() {
           <div className="max-w-xs">
             <img src="/logo.png" alt="Roket" className="h-9" />
             <p className="mt-4 text-sm leading-relaxed text-muted-foreground">
-              Automated crypto trading plans, daily profits and payouts every 7 days.
+              The smartest way to automate your crypto trading and earn passive income daily.
             </p>
           </div>
 
-          <div className="grid grid-cols-2 gap-10 sm:grid-cols-3">
+          <div className="grid grid-cols-2 gap-10">
             <div>
               <h3 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
                 Product
@@ -58,25 +58,6 @@ export function Footer() {
                     Get Started
                   </Link>
                 </li>
-              </ul>
-            </div>
-
-            <div>
-              <h3 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
-                Support
-              </h3>
-              <ul className="mt-4 space-y-2 text-sm">
-                <li>
-                  <Link to={user ? "/dashboard" : "/login"} className={linkClass}>
-                    Submit a Ticket
-                  </Link>
-                </li>
-                <li>
-                  <button type="button" onClick={openLiveChat} className={linkClass}>
-                    Live Chat
-                  </button>
-                </li>
-                <li className="text-muted-foreground">24/7 support</li>
               </ul>
             </div>
 

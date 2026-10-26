@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const authState = vi.hoisted(() => ({ user: null as { id: string } | null }));
@@ -99,7 +99,8 @@ describe("Landing page", () => {
     }
     expect(screen.getByText(/Supports USDT BEP20 & Solana/)).toBeInTheDocument();
     expect(screen.getByText(/Exclusive to Plan 2 and above/)).toBeInTheDocument();
-    expect(screen.getByText(/7-day withdrawal cycle/)).toBeInTheDocument();
+    expect(screen.getByText(/reviewed before payout/)).toBeInTheDocument();
+    expect(screen.queryByText(/7-day withdrawal cycle/)).toBeNull();
   });
 
   it("lists the five journey steps in order", () => {
@@ -117,8 +118,25 @@ describe("Landing page", () => {
       "Deposit USDT",
       "Choose a Plan",
       "Earn Daily Profits & Refer",
-      "Withdraw (Every 7 days)",
+      "Withdraw Your Profits",
     ]);
+  });
+
+  it("opens the how-it-works video in a modal", () => {
+    renderLanding();
+
+    expect(screen.queryByTitle("How Roket works")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: /watch video/i }));
+
+    expect(screen.getByTitle("How Roket works")).toHaveAttribute(
+      "src",
+      expect.stringContaining("zwrojeC1iM8"),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /close video/i }));
+
+    expect(screen.queryByTitle("How Roket works")).toBeNull();
   });
 
   it("answers the crypto, withdrawal and referral questions", () => {
@@ -149,6 +167,7 @@ describe("Landing page", () => {
     for (const ticket of screen.getAllByRole("link", { name: "Submit a Ticket" })) {
       expect(ticket).toHaveAttribute("href", "/login");
     }
-    expect(screen.getAllByRole("button", { name: "Live Chat" })).toHaveLength(2);
+    expect(screen.getAllByRole("button", { name: "Live Chat" })).toHaveLength(1);
+    expect(screen.queryByRole("heading", { name: "Support" })).toBeNull();
   });
 });

@@ -1,16 +1,29 @@
 import { useEffect, useRef, useState } from "react";
+import { supabase } from "@/integrations/supabase/client";
 
 type Action = "Deposit" | "Withdrawal";
 
 type Tx = {
-  id: number;
+  /** Unique render key. Real rows get a fresh suffix every time they loop back in. */
+  key: string;
   name: string;
   action: Action;
   amount: number;
   time: string;
+  real: boolean;
+};
+
+/** Shape of the columns we read from `public.transactions`. */
+type RealRow = {
+  id: string;
+  type: string | null;
+  amount: number | null;
+  created_at: string | null;
 };
 
 const MAX_ROWS = 5;
+const REAL_LIMIT = 5;
+const SIM_POOL = 4;
 
 const names = [
   "John D.",
@@ -49,15 +62,31 @@ const clock = (d: Date) => d.toLocaleTimeString("en-GB", { hour12: false });
 
 let seq = 0;
 
-function makeTx(when = new Date()): Tx {
+function makeSim(when = new Date()): Tx {
   const action = pick(actions);
   return {
-    id: ++seq,
+    key: `sim-${++seq}`,
     name: pick(names),
     action,
     amount: pick(amounts[action]),
     time: clock(when),
+    real: false,
   };
+}
+
+function makeReal(row: RealRow): Tx | null {
+  const action: Action | null =
+    row.type === "deposit" ? "Deposit" : row.type === "withdrawal" ? "Withdrawal" : null;
+  if (!action) return null;
+
+  const amount = Number(row.amount);
+  if (!Number.isFinite(amount) || amount <= 0) return null;
+
+  const when = row.created_at ? new Date(row.created_at) : new Date();
+  const time = Number.isNaN(when.getTime()) ? clock(new Date()) : clock(when);
+
+  // Customer identities stay private on the public landing page.
+  return { key: `real-${row.id}`, name: "Verified User", action, amount, time, real: true };
 }
 
 function Icon({ action }: { action: Action }) {
@@ -81,32 +110,109 @@ function Icon({ action }: { action: Action }) {
     );
   }
 
-  if (action === "Withdrawal") {
-    return (
-      <svg {...common}>
-        <path d="M10 17V6" />
-        <path d="M5.5 10L10 5.5 14.5 10" />
-      </svg>
-    );
+  return (
+    <svg {...common}>
+      <path d="M10 17V6" />
+      <path d="M5.5 10L10 5.5 14.5 10" />
+    </svg>
+  );
+}
+
+type SupabaseRpc = (
+  fn: string,
+  args: Record<string, unknown>,
+) => Promise<{ data: unknown; error: unknown }>;
+
+/**
+ * Anonymous visitors cannot read `transactions` directly (RLS). The
+ * SECURITY DEFINER RPC returns only type/amount/created_at, so the feed stays
+ * real without exposing identities or wallets. The direct table read remains as
+ * a fallback for environments where the RPC has not been deployed yet.
+ */
+async function fetchRecentTransactions(): Promise<RealRow[]> {
+  try {
+    const rpc = supabase.rpc as unknown as SupabaseRpc;
+    const { data, error } = await rpc("recent_public_transactions", { row_limit: REAL_LIMIT });
+    if (!error && Array.isArray(data)) return data as RealRow[];
+  } catch {
+    // RPC unavailable — fall through to the table read.
   }
 
-  return null;
+  try {
+    const { data, error } = await supabase
+      .from("transactions")
+      .select("*")
+      .in("type", ["deposit", "withdrawal"])
+      .eq("status", "completed")
+      .order("created_at", { ascending: false })
+      .limit(REAL_LIMIT);
+
+    if (!error && data) return data as unknown as RealRow[];
+  } catch {
+    // Real activity is optional — the simulated feed keeps the section alive.
+  }
+
+  return [];
 }
 
 export function LiveTransactions() {
   const [rows, setRows] = useState<Tx[]>([]);
+  const poolRef = useRef<Tx[]>([]);
+  const cursorRef = useRef(0);
   const timer = useRef<number | undefined>(undefined);
 
   useEffect(() => {
     const now = Date.now();
-    setRows(
-      Array.from({ length: 3 }, (_, i) => makeTx(new Date(now - (i + 1) * 9000))),
-    );
+    setRows(Array.from({ length: 3 }, (_, i) => makeSim(new Date(now - (i + 1) * 9000))));
+
+    // Start with a simulated-only rotation so the feed never waits on the network.
+    poolRef.current = Array.from({ length: SIM_POOL }, () => makeSim());
+
+    let cancelled = false;
+
+    const loadReal = async () => {
+      const recent = await fetchRecentTransactions();
+      if (cancelled || recent.length === 0) return;
+
+      const real = recent.map(makeReal).filter((tx): tx is Tx => tx !== null);
+
+      if (real.length === 0) return;
+
+      // Merge real rows ahead of the simulated slots and rotate through the whole pool.
+      poolRef.current = [...real, ...Array.from({ length: SIM_POOL }, () => makeSim())];
+      cursorRef.current = 0;
+
+      setRows((prev) => {
+        const merged: Tx[] = [];
+        const seen = new Set<string>();
+        for (const tx of [...real, ...prev]) {
+          if (seen.has(tx.key)) continue;
+          seen.add(tx.key);
+          merged.push(tx);
+          if (merged.length === MAX_ROWS) break;
+        }
+        return merged;
+      });
+    };
+
+    void loadReal();
+
+    const nextTx = (): Tx => {
+      const pool = poolRef.current;
+      if (pool.length === 0) return makeSim();
+
+      const base = pool[cursorRef.current % pool.length]!;
+      cursorRef.current = (cursorRef.current + 1) % pool.length;
+
+      // Real rows loop forever (fresh key so the entry animation replays);
+      // simulated slots always generate a new name/amount.
+      return base.real ? { ...base, key: `${base.key}-${++seq}` } : makeSim();
+    };
 
     const schedule = () => {
       timer.current = window.setTimeout(
         () => {
-          setRows((prev) => [makeTx(), ...prev].slice(0, MAX_ROWS));
+          setRows((prev) => [nextTx(), ...prev].slice(0, MAX_ROWS));
           schedule();
         },
         5000 + Math.random() * 10000,
@@ -115,7 +221,10 @@ export function LiveTransactions() {
 
     schedule();
 
-    return () => window.clearTimeout(timer.current);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer.current);
+    };
   }, []);
 
   return (
@@ -123,9 +232,7 @@ export function LiveTransactions() {
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <h2 className="text-3xl font-bold">Live Transactions</h2>
-          <p className="mt-2 text-muted-foreground">
-            Latest activity across Roket accounts.
-          </p>
+          <p className="mt-2 text-muted-foreground">Latest activity across Roket accounts.</p>
         </div>
         <span className="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-bold uppercase tracking-wider">
           <span className="relative flex h-2 w-2">
@@ -141,12 +248,10 @@ export function LiveTransactions() {
           const s = look[r.action];
           return (
             <li
-              key={r.id}
+              key={r.key}
               className="tx-in flex items-center gap-4 rounded-xl border bg-card px-4 py-3"
             >
-              <span
-                className={`grid h-9 w-9 shrink-0 place-items-center rounded-full ${s.chip}`}
-              >
+              <span className={`grid h-9 w-9 shrink-0 place-items-center rounded-full ${s.chip}`}>
                 <Icon action={r.action} />
               </span>
               <div className="min-w-0">

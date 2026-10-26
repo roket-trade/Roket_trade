@@ -21,7 +21,7 @@ const features: Feature[] = [
   {
     icon: ShieldCheck,
     title: "Secure Withdrawals",
-    text: "A 7-day withdrawal cycle with a $50 minimum and $200 maximum per request, reviewed before payout.",
+    text: "Withdrawals are reviewed before payout, with a $50 minimum and $200 maximum per request.",
   },
   {
     icon: Headset,
@@ -32,17 +32,17 @@ const features: Feature[] = [
 
 export function Features() {
   return (
-    <section id="features" className="mx-auto max-w-6xl px-6 py-20">
+    <section id="features" className="mx-auto max-w-5xl px-6 py-20">
       <h2 className="text-center text-4xl font-bold">Why Choose Us</h2>
       <p className="mx-auto mt-3 max-w-xl text-center text-muted-foreground">
         Real tools, clear rules and payouts you can plan around.
       </p>
 
-      <div className="mt-14 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="mt-14 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {features.map((f) => (
           <div
             key={f.title}
-            className="rounded-2xl border bg-card p-6 transition-colors hover:border-primary/60"
+            className="h-full rounded-2xl border bg-card p-6 transition-colors hover:border-primary/60"
           >
             <span className="grid h-11 w-11 place-items-center rounded-xl bg-secondary/15 text-secondary">
               <f.icon className="h-5 w-5" aria-hidden="true" />
