@@ -10,6 +10,7 @@ import {
 } from "@tanstack/react-router";
 import { useEffect, type ReactNode } from "react";
 import { Toaster } from "sonner";
+import { Crisp } from "crisp-sdk-web";
 
 import appCss from "../styles.css?url";
 import { reportLovableError } from "../lib/lovable-error-reporting";
@@ -107,13 +108,6 @@ function RootShell({ children }: { children: ReactNode }) {
     <html lang="en">
       <head>
         <HeadContent />
-        <script
-          type="text/javascript"
-          dangerouslySetInnerHTML={{
-            __html:
-              'window.$crisp=[];window.CRISP_WEBSITE_ID="31ab4ec2-ac77-432d-9d61-234b2b91f7b9";(function(){d=document;s=d.createElement("script");s.src="https://client.crisp.chat/l.js";s.async=1;d.getElementsByTagName("head")[0].appendChild(s);})();',
-          }}
-        />
       </head>
       <body>
         {children}
@@ -125,6 +119,11 @@ function RootShell({ children }: { children: ReactNode }) {
 
 function RootComponent() {
   const { queryClient } = Route.useRouteContext();
+
+  useEffect(() => {
+    Crisp.configure("31ab4ec2-ac77-432d-9d61-234b2b91f7b9");
+    Crisp.chat.hide();
+  }, []);
 
   return (
     <QueryClientProvider client={queryClient}>

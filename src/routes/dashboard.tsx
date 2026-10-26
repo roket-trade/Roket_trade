@@ -24,6 +24,7 @@ import { SupportModal } from "@/components/SupportModal";
 import { AccountSuspendedOverlay } from "@/components/AccountSuspendedOverlay";
 import { RequireAuth } from "@/components/RequireAuth";
 import { supabase } from "@/integrations/supabase/client";
+import { Crisp } from "crisp-sdk-web";
 import type { Tables } from "@/integrations/supabase/types";
 import { createPlatformStats } from "@/lib/platform-stats";
 import type { PlatformStats } from "@/lib/platform-stats";
@@ -1977,12 +1978,14 @@ function DashboardContent() {
                     <button
                       type="button"
                       onClick={() => {
-                        const crisp = (window as any).$crisp;
-                        if (crisp) {
-                          crisp.push(["set", "user:email", [user?.email ?? ""]]);
-                          crisp.push(["set", "user:nickname", [profile?.full_name ?? ""]]);
-                          crisp.push(["do", "chat:open"]);
-                        }
+                        const handleLiveChat = () => {
+                          if (user) {
+                            Crisp.user.setEmail(user.email ?? "");
+                            Crisp.user.setNickname(profile?.full_name || "User");
+                          }
+                          Crisp.chat.open();
+                        };
+                        handleLiveChat();
                       }}
                       className="flex w-full items-center gap-3 rounded-lg px-2 py-2 text-sm text-muted-foreground transition hover:bg-gray-950/60 hover:text-sky-400"
                     >
