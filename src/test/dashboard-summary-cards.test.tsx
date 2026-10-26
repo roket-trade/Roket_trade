@@ -285,14 +285,10 @@ describe("Dashboard top summary cards", () => {
 
     const help = screen.getByRole("heading", { name: "Need Help?" }).closest("section");
     expect(help?.className).toContain("border-l-rose-500");
-    expect(screen.getByRole("link", { name: "Message on Telegram" })).toHaveAttribute(
-      "href",
-      "https://t.me/roket_trade",
-    );
-    expect(screen.getByRole("link", { name: "Submit A Ticket" })).toHaveAttribute(
-      "href",
-      "mailto:info@roket.bond?subject=Support%20Ticket",
-    );
+    // Telegram was replaced by the Crisp Live Chat button, which the dashboard
+    // wires to Crisp.chat.open().
+    expect(screen.getByRole("button", { name: "Live Chat" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Submit A Ticket" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Email Us: info@roket.bond" })).toHaveAttribute(
       "href",
       "mailto:info@roket.bond",

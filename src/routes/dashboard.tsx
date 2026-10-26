@@ -1657,6 +1657,23 @@ function DashboardContent() {
     toast.info("Plan cancellation is reviewed by support. Please contact support to proceed.");
   };
 
+  // Opens the Crisp chat window from the dashboard's own button. The widget is
+  // kept hidden by the SDK (see __root.tsx) so its default bubble never covers
+  // the UI — visibility has to be restored before opening, otherwise the chat
+  // window opens inside a hidden container and nothing appears on screen.
+  const openLiveChat = () => {
+    console.log("Live Chat button clicked");
+    if (typeof window === "undefined") return;
+
+    if (user) {
+      Crisp.user.setEmail(user.email ?? "");
+      Crisp.user.setNickname(profile?.full_name || "User");
+    }
+
+    Crisp.chat.show();
+    Crisp.chat.open();
+  };
+
   return (
     <div className="min-h-screen bg-background">
       <header className="border-b border-border/70">
@@ -1977,16 +1994,7 @@ function DashboardContent() {
                   <li>
                     <button
                       type="button"
-                      onClick={() => {
-                        const handleLiveChat = () => {
-                          if (user) {
-                            Crisp.user.setEmail(user.email ?? "");
-                            Crisp.user.setNickname(profile?.full_name || "User");
-                          }
-                          Crisp.chat.open();
-                        };
-                        handleLiveChat();
-                      }}
+                      onClick={openLiveChat}
                       className="flex w-full items-center gap-3 rounded-lg px-2 py-2 text-sm text-muted-foreground transition hover:bg-gray-950/60 hover:text-sky-400"
                     >
                       <MessageSquare className="h-4 w-4 text-sky-400" aria-hidden="true" />
