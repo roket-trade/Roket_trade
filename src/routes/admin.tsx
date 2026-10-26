@@ -67,7 +67,12 @@ type SupportTicket = {
   image_url?: string | null;
 };
 
-type Tab = "deposits" | "users" | "withdrawals" | "kyc" | "support" | "announcements";
+type Tab =
+  "transactions" | "deposits" | "users" | "withdrawals" | "kyc" | "support" | "announcements";
+
+// The All Transactions tab keeps the whole row and, where the deployment
+// exposes it, the embedded profile email.
+type AllTx = Tx & { profiles?: { email: string | null } | null };
 
 type SupportMessage = {
   id: string;
@@ -85,7 +90,6 @@ type Announcement = {
   is_active: boolean;
   created_at: string;
 };
-
 
 
 // Money EARNED per user, aggregated from transactions — deposits are never part
@@ -124,6 +128,36 @@ const asNumber = (value: unknown, fallback = 0) => {
   return Number.isFinite(n) ? n : fallback;
 };
 
+// Human labels for the transaction types stored in `transactions.type`.
+const TX_TYPE_LABELS: Record<string, string> = {
+  deposit: "Deposit",
+  withdrawal: "Withdrawal",
+  referral_bonus: "Referral Bonus",
+  ad_earning: "Ads Earning",
+  daily_profit: "Daily Profit",
+  adjustment: "Adjustment",
+};
+
+const txTypeLabel = (type: string) =>
+  TX_TYPE_LABELS[type] ?? type.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+
+// Badges shared by the All Transactions / inline tables.
+const statusBadgeClass = (status: string) =>
+  status === "completed"
+    ? "rounded-full bg-emerald-500/15 px-2.5 py-1 text-xs font-semibold text-emerald-400"
+    : status === "pending"
+      ? "rounded-full bg-amber-500/15 px-2.5 py-1 text-xs font-semibold text-amber-400"
+      : "rounded-full bg-destructive/15 px-2.5 py-1 text-xs font-semibold text-destructive";
+
+const formatDateTime = (value: string) => {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "—";
+  return date.toLocaleString("en-US", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  });
+};
+
 // PostgREST reports a select on an unknown column as 42703 (and an unknown
 // column in a mutation payload as PGRST204). Tolerating both lets the panel
 // keep working before the is_suspended migration has run.
@@ -147,6 +181,40 @@ async function fetchAdminUsers(): Promise<AdminUser[]> {
     ...u,
     is_suspended: false,
   }));
+}
+
+// All Transactions: latest 100 rows across every type/status. `profiles` has no
+// email column in this database (see supabase/migrations/20261021010000_admin_join_fix.sql),
+// so a `profiles(email)` embed answers PGRST200. Try it once per session — a
+// deployment that adds the column then gets the join for free — and fall back to
+// the plain select, with emails resolved through admin_user_emails() afterwards.
+let profilesEmailEmbedAvailable: boolean | null = null;
+
+async function fetchAllTransactions(): Promise<AllTx[]> {
+  if (profilesEmailEmbedAvailable !== false) {
+    const embedded = await supabase
+      .from("transactions")
+      .select(`${TX_COLS},profiles(email)`)
+      .order("created_at", { ascending: false })
+      .limit(100);
+    if (!embedded.error) {
+      profilesEmailEmbedAvailable = true;
+      return (embedded.data ?? []) as unknown as AllTx[];
+    }
+    profilesEmailEmbedAvailable = false;
+    console.warn(
+      "[admin] transactions → profiles(email) embed unavailable, using the email RPC:",
+      embedded.error.message,
+    );
+  }
+
+  const plain = await supabase
+    .from("transactions")
+    .select(TX_COLS)
+    .order("created_at", { ascending: false })
+    .limit(100);
+  if (plain.error) throw plain.error;
+  return (plain.data ?? []) as unknown as AllTx[];
 }
 
 // PostgREST hands numeric aggregates back as numbers, but a plain SQL function
@@ -412,6 +480,11 @@ function AdminContent() {
   const [txLoading, setTxLoading] = useState(false);
   const [txError, setTxError] = useState<string | null>(null);
 
+  // All Transactions tab — loaded lazily the first time the tab is opened.
+  const [allTransactions, setAllTransactions] = useState<AllTx[]>([]);
+  const [allTxLoading, setAllTxLoading] = useState(false);
+  const [allTxError, setAllTxError] = useState<string | null>(null);
+
   // Support ticket reply modal.
   const [replyTicket, setReplyTicket] = useState<SupportTicket | null>(null);
   const [replyMessages, setReplyMessages] = useState<SupportMessage[]>([]);
@@ -512,6 +585,52 @@ function AdminContent() {
     setAggregates(map);
     setAggregatesError(error);
   }, []);
+
+  // Latest 100 transactions for the All Transactions tab. Emails come from the
+  // embedded profile when the deployment can join it, otherwise from the same
+  // admin_user_emails() RPC the rest of the panel uses.
+  const loadTransactions = useCallback(async () => {
+    setAllTxLoading(true);
+    setAllTxError(null);
+    try {
+      const rows = await fetchAllTransactions();
+      setAllTransactions(rows);
+      // Keep the shared email map warm so deposits/withdrawals/users/transactions
+      // all render the same address for the same user.
+      const joined: Record<string, string> = {};
+      for (const row of rows) {
+        const email = row.profiles?.email;
+        if (row.user_id && email) joined[row.user_id] = email;
+      }
+      if (Object.keys(joined).length > 0) {
+        setEmails((prev) => ({ ...joined, ...prev }));
+      }
+      const missing = [
+        ...new Set(
+          rows
+            .map((row) => row.user_id)
+            .filter((id): id is string => Boolean(id) && !joined[id as string]),
+        ),
+      ];
+      if (missing.length > 0) {
+        const { map } = await fetchEmails(missing);
+        if (Object.keys(map).length > 0) {
+          setEmails((prev) => ({ ...prev, ...map }));
+        }
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Couldn't load transactions.";
+      console.error("[admin] transactions load failed:", err);
+      setAllTxError(msg);
+    } finally {
+      setAllTxLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (tab !== "transactions") return;
+    void loadTransactions();
+  }, [tab, loadTransactions]);
 
   const approveDeposit = async (tx: Tx) => {
     if (!tx.user_id) {
@@ -1097,6 +1216,7 @@ const openPlanModal = (user: AdminUser) => {
     { id: "kyc", label: "KYC Verifications", count: kycUsers.length },
     { id: "support", label: "Support Tickets", count: supportTickets.length },
     { id: "announcements", label: "Announcements", count: announcements.length },
+    { id: "transactions", label: "All Transactions", count: allTransactions.length },
   ];
 
   const filteredUsers = useMemo(() => {
@@ -1123,246 +1243,302 @@ const openPlanModal = (user: AdminUser) => {
       <main className="mx-auto max-w-6xl px-4 py-10">
         <p className="text-xs font-semibold uppercase tracking-[0.25em] text-primary">Admin Panel</p>
         <h1 className="mt-2 font-display text-4xl font-bold">Manage the platform</h1>
-        <p className="mt-2 text-sm text-muted-foreground">Approve deposits (pays 10% referral bonus), review withdrawals, verify KYC, and manage user accounts.</p>
-        <div className="mt-6 flex flex-wrap gap-2">
-          {tabs.map((t) => (
-            <button key={t.id} type="button" onClick={() => setTab(t.id)}
-              className={tab === t.id ? "rounded-lg bg-brand px-4 py-2.5 text-sm font-semibold text-primary-foreground shadow-glow" : "rounded-lg border border-border px-4 py-2.5 text-sm font-semibold text-muted-foreground hover:text-foreground"}>
-              {t.label} ({t.count})
-            </button>
-          ))}
-          <button type="button" onClick={() => void load()} className="ml-auto rounded-lg border border-border px-4 py-2.5 text-sm font-semibold text-muted-foreground hover:text-foreground">Refresh</button>
-        </div>
-        {loading ? (
-          <div className="flex min-h-[40vh] items-center justify-center"><div className="h-7 w-7 animate-spin rounded-full border-2 border-muted border-t-primary" /></div>
-        ) : (<><div className="mt-6">{tab === "deposits" && (
-          <section className="overflow-hidden rounded-2xl border bg-card">
-            <div className="overflow-x-auto"><table className="w-full min-w-[760px] text-left text-sm">
-              <thead><tr className="border-b border-border/70 text-xs uppercase tracking-widest text-muted-foreground">
-                <th className="px-4 py-3">User</th><th className="px-4 py-3">Plan</th><th className="px-4 py-3">Amount</th>
-                <th className="px-4 py-3">Tx Hash</th><th className="px-4 py-3">Network</th><th className="px-4 py-3 text-right">Actions</th>
-              </tr></thead>
-              <tbody>
-                {deposits.length === 0 && (<tr><td colSpan={6} className="px-4 py-10 text-center text-muted-foreground">No pending deposits.</td></tr>)}
-                {deposits.map((tx) => (
-                  <tr key={tx.id} className="border-b border-border/40 last:border-0">
-                    <td className="px-4 py-3 font-medium">{tx.user_id ? emails[tx.user_id] ?? short(tx.user_id, 10) : "—"}</td>
-                    <td className="px-4 py-3">{tx.plan_name ?? "—"}</td>
-                    <td className="px-4 py-3 font-semibold text-primary">{money(Number(tx.deposit_amount ?? tx.amount))}</td>
-                    <td className="px-4 py-3 font-mono text-xs" title={tx.tx_hash ?? ""}>{short(tx.tx_hash, 22)}</td>
-                    <td className="px-4 py-3">{tx.network ?? "—"}</td>
-                    <td className="px-4 py-3"><div className="flex justify-end gap-2">
-                      <button type="button" disabled={busyId === tx.id} onClick={() => void approveDeposit(tx)} className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-emerald-500 disabled:opacity-50">{busyId === tx.id ? "…" : "Approve"}</button>
-                      <button type="button" disabled={busyId === tx.id} onClick={() => void rejectDeposit(tx)} className="rounded-lg bg-destructive/90 px-3 py-1.5 text-xs font-bold text-white hover:bg-destructive disabled:opacity-50">Reject</button>
-                    </div></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table></div>
-          </section>
-        )}
-        {tab === "users" && (
-          <section className="space-y-4">
-            <div className="flex flex-wrap items-center gap-3">
-              <input
-                type="search"
-                value={userSearch}
-                onChange={(e) => setUserSearch(e.target.value)}
-                placeholder="Search by email or name…"
-                aria-label="Search users by email or name"
-                className="w-full max-w-sm rounded-lg border border-border bg-muted/70 px-4 py-2.5 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20"
-              />
-              <span className="text-xs text-muted-foreground">
-                {filteredUsers.length} of {users.length} users
-              </span>
-            </div>
-            {emailsError && (
-              <p className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
-                Emails unavailable: {emailsError}
-              </p>
+        <div className="mt-6 flex flex-col gap-6 md:flex-row">
+          <nav
+            aria-label="Admin sections"
+            className="flex w-full flex-col gap-2 md:w-64"
+          >
+            {tabs.map((t) => (
+              <button key={t.id} type="button" onClick={() => setTab(t.id)}
+                aria-current={tab === t.id ? "page" : undefined}
+                className={tab === t.id ? "w-full rounded-lg bg-brand px-4 py-2.5 text-left text-sm font-semibold text-primary-foreground shadow-glow" : "w-full rounded-lg border border-border px-4 py-2.5 text-left text-sm font-semibold text-muted-foreground hover:text-foreground"}>
+                {t.label} ({t.count})
+              </button>
+            ))}
+            <button type="button" onClick={() => { void load(); if (tab === "transactions") void loadTransactions(); }} className="w-full rounded-lg border border-border px-4 py-2.5 text-left text-sm font-semibold text-muted-foreground hover:text-foreground">Refresh</button>
+          </nav>
+          <div className="flex-1">
+            {loading ? (
+              <div className="flex min-h-[40vh] items-center justify-center"><div className="h-7 w-7 animate-spin rounded-full border-2 border-muted border-t-primary" /></div>
+            ) : (<>{tab === "transactions" && (
+              <section className="space-y-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <h2 className="font-display text-xl font-bold">All Transactions</h2>
+                    <p className="mt-1 text-xs text-muted-foreground">Latest 100 transactions across every type and status.</p>
+                  </div>
+                  <button type="button" onClick={() => void loadTransactions()} disabled={allTxLoading} className="rounded-lg border border-border px-4 py-2.5 text-sm font-semibold text-muted-foreground hover:text-foreground disabled:opacity-50">{allTxLoading ? "Loading…" : "Reload"}</button>
+                </div>
+                {allTxError && (<p className="rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">Couldn&apos;t load transactions: {allTxError}</p>)}
+                <div className="overflow-hidden rounded-2xl border bg-card">
+                  <div className="overflow-x-auto"><table className="w-full min-w-[860px] text-left text-sm">
+                    <thead><tr className="border-b border-border/70 text-xs uppercase tracking-widest text-muted-foreground">
+                      <th className="px-4 py-3">Date/Time</th><th className="px-4 py-3">User Email</th><th className="px-4 py-3">Type</th>
+                      <th className="px-4 py-3">Amount</th><th className="px-4 py-3">Status</th><th className="px-4 py-3">Details</th>
+                    </tr></thead>
+                    <tbody>
+                      {allTxLoading && allTransactions.length === 0 && (<tr><td colSpan={6} className="px-4 py-10 text-center text-muted-foreground">Loading transactions…</td></tr>)}
+                      {!allTxLoading && allTransactions.length === 0 && (<tr><td colSpan={6} className="px-4 py-10 text-center text-muted-foreground">{allTxError ? "Transactions unavailable." : "No transactions yet."}</td></tr>)}
+                      {allTransactions.map((tx) => {
+                        const amount = asNumber(tx.amount);
+                        const negative = amount < 0 || tx.type === "withdrawal";
+                        const showsHash = tx.type === "deposit" || tx.type === "withdrawal";
+                        return (
+                          <tr key={tx.id} className="border-b border-border/40 last:border-0">
+                            <td className="whitespace-nowrap px-4 py-3 text-muted-foreground">{formatDateTime(tx.created_at)}</td>
+                            <td className="px-4 py-3 font-medium">{tx.profiles?.email ?? (tx.user_id ? emails[tx.user_id] ?? short(tx.user_id, 10) : "—")}</td>
+                            <td className="px-4 py-3">{txTypeLabel(tx.type)}</td>
+                            <td className={negative ? "px-4 py-3 font-semibold text-destructive" : "px-4 py-3 font-semibold text-emerald-400"}>{money(amount)}</td>
+                            <td className="px-4 py-3"><span className={statusBadgeClass(tx.status)}>{tx.status}</span></td>
+                            <td className="px-4 py-3 font-mono text-xs" title={showsHash ? tx.tx_hash ?? "" : undefined}>
+                              {showsHash ? (
+                                <>
+                                  {short(tx.tx_hash, 14)}
+                                  {tx.network ? (<span className="ml-2 font-sans text-muted-foreground">{tx.network}</span>) : null}
+                                </>
+                              ) : (
+                                tx.plan_name ?? "—"
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table></div>
+                </div>
+              </section>
             )}
-            {aggregatesError && (
-              <p className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
-                Earnings unavailable: {aggregatesError} — run
-                supabase/migrations/20261030000000_admin_user_aggregates.sql.
-              </p>
-            )}
-            <div className="overflow-hidden rounded-2xl border bg-card">
-              <div className="overflow-x-auto"><table className="w-full min-w-[1080px] text-left text-sm">
-                <thead><tr className="border-b border-border/70 text-xs uppercase tracking-widest text-muted-foreground">
-                  <th className="px-4 py-3">Email</th><th className="px-4 py-3">Name</th>
-                  <th className="px-4 py-3">Total Earned</th><th className="px-4 py-3">Available Balance</th>
-                  <th className="px-4 py-3">Referrals</th><th className="px-4 py-3">KYC Status</th>
-                  <th className="px-4 py-3">Plan Name</th><th className="px-4 py-3">Account Status</th>
-                  <th className="px-4 py-3 text-right">Actions</th>
-                </tr></thead>
-                <tbody>
-                  {filteredUsers.length === 0 && (<tr><td colSpan={9} className="px-4 py-10 text-center text-muted-foreground">{users.length === 0 ? "No users yet." : "No users match that search."}</td></tr>)}
-                  {filteredUsers.map((u) => {
-                    // Earnings come from completed transactions only — a deposit
-                    // is never shown as (or editable as) a balance.
-                    const agg = aggregates[u.id];
-                    return (
-                    <tr key={u.id} className="border-b border-border/40 last:border-0">
-                      <td className="px-4 py-3 font-medium">{emails[u.id] ?? short(u.id, 10)}</td>
-                      <td className="px-4 py-3">{u.full_name || "—"}</td>
-                      <td className="px-4 py-3 font-semibold text-primary" title="Completed daily profit + ad rewards + referral bonuses (deposits excluded)">{agg ? money(agg.totalEarned) : "—"}</td>
-                      <td className="px-4 py-3" title={agg ? `Earned ${money(agg.totalEarned)} − withdrawn ${money(agg.totalWithdrawn)}` : "Earnings unavailable"}>{agg ? money(agg.availableBalance) : "—"}</td>
-                      <td className="px-4 py-3">{agg ? agg.referralCount : "—"}</td>
-                      <td className="px-4 py-3">
-                        <span className={u.kyc_status === "verified"
-                          ? "rounded-full bg-emerald-500/15 px-2.5 py-1 text-xs font-semibold text-emerald-400"
-                          : u.kyc_status === "rejected"
-                            ? "rounded-full bg-destructive/15 px-2.5 py-1 text-xs font-semibold text-destructive"
-                            : "rounded-full bg-muted px-2.5 py-1 text-xs font-semibold text-muted-foreground"}>
-                          {u.kyc_status ?? "unverified"}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3">{u.plan_name ?? "None"}</td>
-                      <td className="px-4 py-3">
-                        <span className={u.is_suspended
-                          ? "rounded-full bg-destructive/15 px-2.5 py-1 text-xs font-semibold text-destructive"
-                          : "rounded-full bg-emerald-500/15 px-2.5 py-1 text-xs font-semibold text-emerald-400"}>
-                          {u.is_suspended ? "Held" : "Active"}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-right">
-                        <button type="button" aria-haspopup="menu" aria-expanded={actionsFor?.userId === u.id} disabled={busyUserId === u.id} onClick={(event) => toggleActions(u.id, event)} className="rounded-lg border border-border px-3 py-1.5 text-xs font-bold text-muted-foreground hover:border-primary hover:text-primary disabled:opacity-50">
-                          {busyUserId === u.id ? "…" : "Actions"}
-                        </button>
-                      </td>
-                    </tr>
-                    );
-                  })}
-                </tbody>
-              </table></div>
-            </div>
-          </section>
-        )}
-        {tab === "withdrawals" && (
-          <section className="overflow-hidden rounded-2xl border bg-card">
-            <div className="overflow-x-auto"><table className="w-full min-w-[680px] text-left text-sm">
-              <thead><tr className="border-b border-border/70 text-xs uppercase tracking-widest text-muted-foreground">
-                <th className="px-4 py-3">User</th><th className="px-4 py-3">Amount</th><th className="px-4 py-3">Crypto Address</th><th className="px-4 py-3 text-right">Actions</th>
-              </tr></thead>
-              <tbody>
-                {withdrawals.length === 0 && (<tr><td colSpan={4} className="px-4 py-10 text-center text-muted-foreground">No pending withdrawals.</td></tr>)}
-                {withdrawals.map((tx) => (
-                  <tr key={tx.id} className="border-b border-border/40 last:border-0">
-                    <td className="px-4 py-3 font-medium">{tx.user_id ? emails[tx.user_id] ?? short(tx.user_id, 10) : "—"}</td>
-                    <td className="px-4 py-3 font-semibold text-primary">{money(Math.abs(Number(tx.amount)))}</td>
-                    <td className="max-w-[260px] truncate px-4 py-3 font-mono text-xs" title={tx.wallet_address ?? ""}>{tx.wallet_address ?? "—"}</td>
-                    <td className="px-4 py-3"><div className="flex justify-end gap-2">
-                      <button type="button" disabled={busyId === tx.id} onClick={() => void approveWithdrawal(tx)} className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-emerald-500 disabled:opacity-50">{busyId === tx.id ? "…" : "Approve"}</button>
-                      <button type="button" disabled={busyId === tx.id} onClick={() => void rejectWithdrawal(tx)} className="rounded-lg bg-destructive/90 px-3 py-1.5 text-xs font-bold text-white hover:bg-destructive disabled:opacity-50">Reject + Refund</button>
-                    </div></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table></div>
-          </section>
-        )}
-        {tab === "kyc" && (
-          <section className="overflow-hidden rounded-2xl border bg-card">
-            <div className="overflow-x-auto"><table className="w-full min-w-[680px] text-left text-sm">
-              <thead><tr className="border-b border-border/70 text-xs uppercase tracking-widest text-muted-foreground">
-                <th className="px-4 py-3">User</th><th className="px-4 py-3">Full Name</th><th className="px-4 py-3">ID Card</th><th className="px-4 py-3 text-right">Actions</th>
-              </tr></thead>
-              <tbody>
-                {kycUsers.length === 0 && (<tr><td colSpan={4} className="px-4 py-10 text-center text-muted-foreground">No pending KYC.</td></tr>)}
-                {kycUsers.map((u) => (
-                  <tr key={u.id} className="border-b border-border/40 last:border-0">
-                    <td className="px-4 py-3 font-medium">{emails[u.id] ?? short(u.id, 10)}</td>
-                    <td className="px-4 py-3">{u.full_name}</td>
-                    <td className="px-4 py-3">{u.id_card_url ? (<a href={u.id_card_url} target="_blank" rel="noreferrer" className="font-semibold text-primary hover:underline">View ID card</a>) : (<span className="text-muted-foreground">No file</span>)}</td>
-                    <td className="px-4 py-3"><div className="flex justify-end gap-2">
-                      <button type="button" disabled={busyId === u.id} onClick={() => void setKyc(u.id, "verified")} className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-emerald-500 disabled:opacity-50">{busyId === u.id ? "…" : "Verify"}</button>
-                      <button type="button" disabled={busyId === u.id} onClick={() => void setKyc(u.id, "rejected")} className="rounded-lg bg-destructive/90 px-3 py-1.5 text-xs font-bold text-white hover:bg-destructive disabled:opacity-50">Reject</button>
-                    </div></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table></div>
-          </section>
-        )}
-        {tab === "support" && (
-          <section className="overflow-hidden rounded-2xl border bg-card">
-            <div className="overflow-x-auto"><table className="w-full min-w-[680px] text-left text-sm">
-              <thead><tr className="border-b border-border/70 text-xs uppercase tracking-widest text-muted-foreground">
-                <th className="px-4 py-3">User</th><th className="px-4 py-3">Category</th><th className="px-4 py-3">Subject</th><th className="px-4 py-3">Message</th><th className="px-4 py-3">Image</th><th className="px-4 py-3">Status</th><th className="px-4 py-3 text-right">Actions</th>
-              </tr></thead>
-              <tbody>
-                {supportTickets.length === 0 && (<tr><td colSpan={7} className="px-4 py-10 text-center text-muted-foreground">No support tickets.</td></tr>)}
-                {supportTickets.map((t) => (
-                  <tr key={t.id} className="border-b border-border/40 last:border-0">
-                    <td className="px-4 py-3 font-medium">{t.user_id ? (emails[t.user_id] ?? short(t.user_id, 10)) : "—"}</td>
-                    <td className="px-4 py-3">{t.category ?? "general"}</td>
-                    <td className="px-4 py-3">{t.subject}</td>
-                    <td className="px-4 py-3 max-w-xs truncate">{t.message}</td>
-                    <td className="px-4 py-3">{t.image_url ? <a href={t.image_url} target="_blank" rel="noreferrer" className="text-primary underline">View</a> : "—"}</td>
-                    <td className="px-4 py-3">{t.status}</td>
-                    <td className="px-4 py-3"><div className="flex justify-end gap-2">
-                      <button type="button" onClick={() => openReplyModal(t)} className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-emerald-500">View & Reply</button>
-                    </div></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table></div>
-          </section>
-        )}
-        {tab === "announcements" && (
-          <section className="space-y-6">
-            <div className="rounded-2xl border bg-card p-6">
-              <h2 className="font-display text-xl font-bold">Create Announcement</h2>
-              <div className="mt-4 grid gap-4">
-                <div>
-                  <label className="text-xs font-semibold text-muted-foreground">Title</label>
-                  <input type="text" value={annTitle} onChange={(e) => setAnnTitle(e.target.value)} className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm" placeholder="Announcement title" />
-                </div>
-                <div>
-                  <label className="text-xs font-semibold text-muted-foreground">Message</label>
-                  <textarea value={annMessage} onChange={(e) => setAnnMessage(e.target.value)} className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm" rows={3} placeholder="Announcement message" />
-                </div>
-                <div>
-                  <label className="text-xs font-semibold text-muted-foreground">Type</label>
-                  <select value={annType} onChange={(e) => setAnnType(e.target.value)} className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm">
-                    <option value="info">info</option>
-                    <option value="warning">warning</option>
-                    <option value="success">success</option>
-                  </select>
-                </div>
-                <button type="button" onClick={() => void createAnnouncement()} disabled={annBusy} className="w-fit rounded-lg bg-primary px-4 py-2 text-sm font-bold text-primary-foreground disabled:opacity-50">
-                  {annBusy ? "Creating…" : "Create"}
-                </button>
-              </div>
-            </div>
-            <div className="overflow-hidden rounded-2xl border bg-card">
-              <div className="overflow-x-auto">
-                <table className="w-full min-w-[680px] text-left text-sm">
+            {tab === "deposits" && (
+              <section className="overflow-hidden rounded-2xl border bg-card">
+                <div className="overflow-x-auto"><table className="w-full min-w-[760px] text-left text-sm">
                   <thead><tr className="border-b border-border/70 text-xs uppercase tracking-widest text-muted-foreground">
-                    <th className="px-4 py-3">Title</th><th className="px-4 py-3">Message</th><th className="px-4 py-3">Type</th><th className="px-4 py-3">Status</th><th className="px-4 py-3">Date</th><th className="px-4 py-3 text-right">Actions</th>
+                    <th className="px-4 py-3">User</th><th className="px-4 py-3">Plan</th><th className="px-4 py-3">Amount</th>
+                    <th className="px-4 py-3">Tx Hash</th><th className="px-4 py-3">Network</th><th className="px-4 py-3 text-right">Actions</th>
                   </tr></thead>
                   <tbody>
-                    {announcements.length === 0 && (<tr><td colSpan={6} className="px-4 py-10 text-center text-muted-foreground">No announcements.</td></tr>)}
-                    {announcements.map((a) => (
-                      <tr key={a.id} className="border-b border-border/40 last:border-0">
-                        <td className="px-4 py-3 font-medium">{a.title}</td>
-                        <td className="px-4 py-3 max-w-xs truncate">{a.message}</td>
-                        <td className="px-4 py-3">{a.type}</td>
-                        <td className="px-4 py-3">{a.is_active ? "Active" : "Inactive"}</td>
-                        <td className="px-4 py-3">{new Date(a.created_at).toLocaleDateString()}</td>
+                    {deposits.length === 0 && (<tr><td colSpan={6} className="px-4 py-10 text-center text-muted-foreground">No pending deposits.</td></tr>)}
+                    {deposits.map((tx) => (
+                      <tr key={tx.id} className="border-b border-border/40 last:border-0">
+                        <td className="px-4 py-3 font-medium">{tx.user_id ? emails[tx.user_id] ?? short(tx.user_id, 10) : "—"}</td>
+                        <td className="px-4 py-3">{tx.plan_name ?? "—"}</td>
+                        <td className="px-4 py-3 font-semibold text-primary">{money(Number(tx.deposit_amount ?? tx.amount))}</td>
+                        <td className="px-4 py-3 font-mono text-xs" title={tx.tx_hash ?? ""}>{short(tx.tx_hash, 22)}</td>
+                        <td className="px-4 py-3">{tx.network ?? "—"}</td>
                         <td className="px-4 py-3"><div className="flex justify-end gap-2">
-                          <button type="button" disabled={busyId === a.id} onClick={() => void toggleAnnouncement(a)} className="rounded-lg border border-border px-3 py-1.5 text-xs font-bold hover:border-primary hover:text-primary disabled:opacity-50">{a.is_active ? "Deactivate" : "Activate"}</button>
-                          <button type="button" disabled={busyId === a.id} onClick={() => void deleteAnnouncement(a)} className="rounded-lg bg-destructive px-3 py-1.5 text-xs font-bold text-destructive-foreground disabled:opacity-50">Delete</button>
+                          <button type="button" disabled={busyId === tx.id} onClick={() => void approveDeposit(tx)} className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-emerald-500 disabled:opacity-50">{busyId === tx.id ? "…" : "Approve"}</button>
+                          <button type="button" disabled={busyId === tx.id} onClick={() => void rejectDeposit(tx)} className="rounded-lg bg-destructive/90 px-3 py-1.5 text-xs font-bold text-white hover:bg-destructive disabled:opacity-50">Reject</button>
                         </div></td>
                       </tr>
                     ))}
                   </tbody>
-                </table>
-              </div>
-            </div>
-          </section>
-        )}
+                </table></div>
+              </section>
+            )}
+            {tab === "users" && (
+              <section className="space-y-4">
+                <div className="flex flex-wrap items-center gap-3">
+                  <input
+                    type="search"
+                    value={userSearch}
+                    onChange={(e) => setUserSearch(e.target.value)}
+                    placeholder="Search by email or name…"
+                    aria-label="Search users by email or name"
+                    className="w-full max-w-sm rounded-lg border border-border bg-muted/70 px-4 py-2.5 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20"
+                  />
+                  <span className="text-xs text-muted-foreground">
+                    {filteredUsers.length} of {users.length} users
+                  </span>
+                </div>
+                {emailsError && (
+                  <p className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
+                    Emails unavailable: {emailsError}
+                  </p>
+                )}
+                {aggregatesError && (
+                  <p className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
+                    Earnings unavailable: {aggregatesError} — run
+                    supabase/migrations/20261030000000_admin_user_aggregates.sql.
+                  </p>
+                )}
+                <div className="overflow-hidden rounded-2xl border bg-card">
+                  <div className="overflow-x-auto"><table className="w-full min-w-[1080px] text-left text-sm">
+                    <thead><tr className="border-b border-border/70 text-xs uppercase tracking-widest text-muted-foreground">
+                      <th className="px-4 py-3">Email</th><th className="px-4 py-3">Name</th>
+                      <th className="px-4 py-3">Total Earned</th><th className="px-4 py-3">Available Balance</th>
+                      <th className="px-4 py-3">Referrals</th><th className="px-4 py-3">KYC Status</th>
+                      <th className="px-4 py-3">Plan Name</th><th className="px-4 py-3">Account Status</th>
+                      <th className="px-4 py-3 text-right">Actions</th>
+                    </tr></thead>
+                    <tbody>
+                      {filteredUsers.length === 0 && (<tr><td colSpan={9} className="px-4 py-10 text-center text-muted-foreground">{users.length === 0 ? "No users yet." : "No users match that search."}</td></tr>)}
+                      {filteredUsers.map((u) => {
+                        // Earnings come from completed transactions only — a deposit
+                        // is never shown as (or editable as) a balance.
+                        const agg = aggregates[u.id];
+                        return (
+                        <tr key={u.id} className="border-b border-border/40 last:border-0">
+                          <td className="px-4 py-3 font-medium">{emails[u.id] ?? short(u.id, 10)}</td>
+                          <td className="px-4 py-3">{u.full_name || "—"}</td>
+                          <td className="px-4 py-3 font-semibold text-primary" title="Completed daily profit + ad rewards + referral bonuses (deposits excluded)">{agg ? money(agg.totalEarned) : "—"}</td>
+                          <td className="px-4 py-3" title={agg ? `Earned ${money(agg.totalEarned)} − withdrawn ${money(agg.totalWithdrawn)}` : "Earnings unavailable"}>{agg ? money(agg.availableBalance) : "—"}</td>
+                          <td className="px-4 py-3">{agg ? agg.referralCount : "—"}</td>
+                          <td className="px-4 py-3">
+                            <span className={u.kyc_status === "verified"
+                              ? "rounded-full bg-emerald-500/15 px-2.5 py-1 text-xs font-semibold text-emerald-400"
+                              : u.kyc_status === "rejected"
+                                ? "rounded-full bg-destructive/15 px-2.5 py-1 text-xs font-semibold text-destructive"
+                                : "rounded-full bg-muted px-2.5 py-1 text-xs font-semibold text-muted-foreground"}>
+                              {u.kyc_status ?? "unverified"}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3">{u.plan_name ?? "None"}</td>
+                          <td className="px-4 py-3">
+                            <span className={u.is_suspended
+                              ? "rounded-full bg-destructive/15 px-2.5 py-1 text-xs font-semibold text-destructive"
+                              : "rounded-full bg-emerald-500/15 px-2.5 py-1 text-xs font-semibold text-emerald-400"}>
+                              {u.is_suspended ? "Held" : "Active"}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-right">
+                            <button type="button" aria-haspopup="menu" aria-expanded={actionsFor?.userId === u.id} disabled={busyUserId === u.id} onClick={(event) => toggleActions(u.id, event)} className="rounded-lg border border-border px-3 py-1.5 text-xs font-bold text-muted-foreground hover:border-primary hover:text-primary disabled:opacity-50">
+                              {busyUserId === u.id ? "…" : "Actions"}
+                            </button>
+                          </td>
+                        </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table></div>
+                </div>
+              </section>
+            )}
+            {tab === "withdrawals" && (
+              <section className="overflow-hidden rounded-2xl border bg-card">
+                <div className="overflow-x-auto"><table className="w-full min-w-[680px] text-left text-sm">
+                  <thead><tr className="border-b border-border/70 text-xs uppercase tracking-widest text-muted-foreground">
+                    <th className="px-4 py-3">User</th><th className="px-4 py-3">Amount</th><th className="px-4 py-3">Crypto Address</th><th className="px-4 py-3 text-right">Actions</th>
+                  </tr></thead>
+                  <tbody>
+                    {withdrawals.length === 0 && (<tr><td colSpan={4} className="px-4 py-10 text-center text-muted-foreground">No pending withdrawals.</td></tr>)}
+                    {withdrawals.map((tx) => (
+                      <tr key={tx.id} className="border-b border-border/40 last:border-0">
+                        <td className="px-4 py-3 font-medium">{tx.user_id ? emails[tx.user_id] ?? short(tx.user_id, 10) : "—"}</td>
+                        <td className="px-4 py-3 font-semibold text-primary">{money(Math.abs(Number(tx.amount)))}</td>
+                        <td className="max-w-[260px] truncate px-4 py-3 font-mono text-xs" title={tx.wallet_address ?? ""}>{tx.wallet_address ?? "—"}</td>
+                        <td className="px-4 py-3"><div className="flex justify-end gap-2">
+                          <button type="button" disabled={busyId === tx.id} onClick={() => void approveWithdrawal(tx)} className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-emerald-500 disabled:opacity-50">{busyId === tx.id ? "…" : "Approve"}</button>
+                          <button type="button" disabled={busyId === tx.id} onClick={() => void rejectWithdrawal(tx)} className="rounded-lg bg-destructive/90 px-3 py-1.5 text-xs font-bold text-white hover:bg-destructive disabled:opacity-50">Reject + Refund</button>
+                        </div></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table></div>
+              </section>
+            )}
+            {tab === "kyc" && (
+              <section className="overflow-hidden rounded-2xl border bg-card">
+                <div className="overflow-x-auto"><table className="w-full min-w-[680px] text-left text-sm">
+                  <thead><tr className="border-b border-border/70 text-xs uppercase tracking-widest text-muted-foreground">
+                    <th className="px-4 py-3">User</th><th className="px-4 py-3">Full Name</th><th className="px-4 py-3">ID Card</th><th className="px-4 py-3 text-right">Actions</th>
+                  </tr></thead>
+                  <tbody>
+                    {kycUsers.length === 0 && (<tr><td colSpan={4} className="px-4 py-10 text-center text-muted-foreground">No pending KYC.</td></tr>)}
+                    {kycUsers.map((u) => (
+                      <tr key={u.id} className="border-b border-border/40 last:border-0">
+                        <td className="px-4 py-3 font-medium">{emails[u.id] ?? short(u.id, 10)}</td>
+                        <td className="px-4 py-3">{u.full_name}</td>
+                        <td className="px-4 py-3">{u.id_card_url ? (<a href={u.id_card_url} target="_blank" rel="noreferrer" className="font-semibold text-primary hover:underline">View ID card</a>) : (<span className="text-muted-foreground">No file</span>)}</td>
+                        <td className="px-4 py-3"><div className="flex justify-end gap-2">
+                          <button type="button" disabled={busyId === u.id} onClick={() => void setKyc(u.id, "verified")} className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-emerald-500 disabled:opacity-50">{busyId === u.id ? "…" : "Verify"}</button>
+                          <button type="button" disabled={busyId === u.id} onClick={() => void setKyc(u.id, "rejected")} className="rounded-lg bg-destructive/90 px-3 py-1.5 text-xs font-bold text-white hover:bg-destructive disabled:opacity-50">Reject</button>
+                        </div></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table></div>
+              </section>
+            )}
+            {tab === "support" && (
+              <section className="overflow-hidden rounded-2xl border bg-card">
+                <div className="overflow-x-auto"><table className="w-full min-w-[680px] text-left text-sm">
+                  <thead><tr className="border-b border-border/70 text-xs uppercase tracking-widest text-muted-foreground">
+                    <th className="px-4 py-3">User</th><th className="px-4 py-3">Category</th><th className="px-4 py-3">Subject</th><th className="px-4 py-3">Message</th><th className="px-4 py-3">Image</th><th className="px-4 py-3">Status</th><th className="px-4 py-3 text-right">Actions</th>
+                  </tr></thead>
+                  <tbody>
+                    {supportTickets.length === 0 && (<tr><td colSpan={7} className="px-4 py-10 text-center text-muted-foreground">No support tickets.</td></tr>)}
+                    {supportTickets.map((t) => (
+                      <tr key={t.id} className="border-b border-border/40 last:border-0">
+                        <td className="px-4 py-3 font-medium">{t.user_id ? (emails[t.user_id] ?? short(t.user_id, 10)) : "—"}</td>
+                        <td className="px-4 py-3">{t.category ?? "general"}</td>
+                        <td className="px-4 py-3">{t.subject}</td>
+                        <td className="px-4 py-3 max-w-xs truncate">{t.message}</td>
+                        <td className="px-4 py-3">{t.image_url ? <a href={t.image_url} target="_blank" rel="noreferrer" className="text-primary underline">View</a> : "—"}</td>
+                        <td className="px-4 py-3">{t.status}</td>
+                        <td className="px-4 py-3"><div className="flex justify-end gap-2">
+                          <button type="button" onClick={() => openReplyModal(t)} className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-emerald-500">View & Reply</button>
+                        </div></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table></div>
+              </section>
+            )}
+            {tab === "announcements" && (
+              <section className="space-y-6">
+                <div className="rounded-2xl border bg-card p-6">
+                  <h2 className="font-display text-xl font-bold">Create Announcement</h2>
+                  <div className="mt-4 grid gap-4">
+                    <div>
+                      <label className="text-xs font-semibold text-muted-foreground">Title</label>
+                      <input type="text" value={annTitle} onChange={(e) => setAnnTitle(e.target.value)} className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm" placeholder="Announcement title" />
+                    </div>
+                    <div>
+                      <label className="text-xs font-semibold text-muted-foreground">Message</label>
+                      <textarea value={annMessage} onChange={(e) => setAnnMessage(e.target.value)} className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm" rows={3} placeholder="Announcement message" />
+                    </div>
+                    <div>
+                      <label className="text-xs font-semibold text-muted-foreground">Type</label>
+                      <select value={annType} onChange={(e) => setAnnType(e.target.value)} className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm">
+                        <option value="info">info</option>
+                        <option value="warning">warning</option>
+                        <option value="success">success</option>
+                      </select>
+                    </div>
+                    <button type="button" onClick={() => void createAnnouncement()} disabled={annBusy} className="w-fit rounded-lg bg-primary px-4 py-2 text-sm font-bold text-primary-foreground disabled:opacity-50">
+                      {annBusy ? "Creating…" : "Create"}
+                    </button>
+                  </div>
+                </div>
+                <div className="overflow-hidden rounded-2xl border bg-card">
+                  <div className="overflow-x-auto">
+                    <table className="w-full min-w-[680px] text-left text-sm">
+                      <thead><tr className="border-b border-border/70 text-xs uppercase tracking-widest text-muted-foreground">
+                        <th className="px-4 py-3">Title</th><th className="px-4 py-3">Message</th><th className="px-4 py-3">Type</th><th className="px-4 py-3">Status</th><th className="px-4 py-3">Date</th><th className="px-4 py-3 text-right">Actions</th>
+                      </tr></thead>
+                      <tbody>
+                        {announcements.length === 0 && (<tr><td colSpan={6} className="px-4 py-10 text-center text-muted-foreground">No announcements.</td></tr>)}
+                        {announcements.map((a) => (
+                          <tr key={a.id} className="border-b border-border/40 last:border-0">
+                            <td className="px-4 py-3 font-medium">{a.title}</td>
+                            <td className="px-4 py-3 max-w-xs truncate">{a.message}</td>
+                            <td className="px-4 py-3">{a.type}</td>
+                            <td className="px-4 py-3">{a.is_active ? "Active" : "Inactive"}</td>
+                            <td className="px-4 py-3">{new Date(a.created_at).toLocaleDateString()}</td>
+                            <td className="px-4 py-3"><div className="flex justify-end gap-2">
+                              <button type="button" disabled={busyId === a.id} onClick={() => void toggleAnnouncement(a)} className="rounded-lg border border-border px-3 py-1.5 text-xs font-bold hover:border-primary hover:text-primary disabled:opacity-50">{a.is_active ? "Deactivate" : "Activate"}</button>
+                              <button type="button" disabled={busyId === a.id} onClick={() => void deleteAnnouncement(a)} className="rounded-lg bg-destructive px-3 py-1.5 text-xs font-bold text-destructive-foreground disabled:opacity-50">Delete</button>
+                            </div></td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </section>
+            )}
+            </>
+            )}
+          </div>
         </div>
         {actionsFor && (() => {
           const target = users.find((u) => u.id === actionsFor.userId);
@@ -1421,8 +1597,6 @@ const openPlanModal = (user: AdminUser) => {
               </div>
             </div>
           </div>
-        )}
-        </>
         )}
         {planUser && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4" role="dialog" aria-modal="true" aria-labelledby="plan-modal-title">

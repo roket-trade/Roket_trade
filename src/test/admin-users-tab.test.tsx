@@ -105,6 +105,62 @@ const hoisted = vi.hoisted(() => {
     },
   ];
 
+  // Fixtures for the All Transactions tab (latest 100, every type/status).
+  const allTransactions = [
+    {
+      id: "all-1",
+      user_id: "user-1",
+      type: "deposit",
+      amount: 500,
+      deposit_amount: 500,
+      plan_name: "Plan 2",
+      network: "BEP20",
+      wallet_address: "0xfeed",
+      tx_hash: "0xabcdef1234567890abcdef1234567890",
+      status: "completed",
+      created_at: "2026-02-04T10:30:00.000Z",
+    },
+    {
+      id: "all-2",
+      user_id: "user-1",
+      type: "withdrawal",
+      amount: -50,
+      deposit_amount: null,
+      plan_name: "Withdraw to BEP20",
+      network: "BEP20",
+      wallet_address: "0xabc",
+      tx_hash: "wd-1234567890abcdef",
+      status: "pending",
+      created_at: "2026-02-03T09:00:00.000Z",
+    },
+    {
+      id: "all-3",
+      user_id: "user-2",
+      type: "referral_bonus",
+      amount: 20,
+      deposit_amount: null,
+      plan_name: null,
+      network: null,
+      wallet_address: null,
+      tx_hash: null,
+      status: "completed",
+      created_at: "2026-02-02T08:00:00.000Z",
+    },
+    {
+      id: "all-4",
+      user_id: "user-2",
+      type: "ad_earning",
+      amount: 1.5,
+      deposit_amount: null,
+      plan_name: null,
+      network: null,
+      wallet_address: null,
+      tx_hash: null,
+      status: "rejected",
+      created_at: "2026-02-01T07:00:00.000Z",
+    },
+  ];
+
   // Fixtures for the no-RPC fallback path (batched queries).
   const fallbackTransactions = [
     { user_id: "user-1", type: "daily_profit", amount: 300, status: "completed" },
@@ -123,6 +179,7 @@ const hoisted = vi.hoisted(() => {
     profiles,
     aggregates,
     transactions,
+    allTransactions,
     fallbackTransactions,
     fallbackReferrals,
     aggregateRpcError: false,
@@ -164,10 +221,19 @@ vi.mock("sonner", () => ({
 vi.mock("@/integrations/supabase/client", () => {
   type Result = { data: unknown; error: unknown };
 
-  const makeBuilder = (table: string, result: Result) => {
-    const state: { column?: string; value?: unknown; payload?: Record<string, unknown> } = {};
+  const makeBuilder = (table: string, result: Result, initialCols = "") => {
+    const state: {
+      cols: string;
+      column?: string;
+      value?: unknown;
+      payload?: Record<string, unknown>;
+      limited: boolean;
+    } = { cols: initialCols, limited: false };
     const builder = {
-      select: () => builder,
+      select: (cols?: string) => {
+        state.cols = cols ?? "";
+        return builder;
+      },
       eq: (column: string, value: unknown) => {
         state.column = column;
         state.value = value;
@@ -175,6 +241,10 @@ vi.mock("@/integrations/supabase/client", () => {
       },
       in: () => builder,
       order: () => builder,
+      limit: () => {
+        state.limited = true;
+        return builder;
+      },
       maybeSingle: () => Promise.resolve(result),
       update: (payload: Record<string, unknown>) => {
         state.payload = payload;
@@ -195,6 +265,17 @@ vi.mock("@/integrations/supabase/client", () => {
           // landed; an empty array models an RLS-blocked UPDATE.
           const affected = hoisted.affectedRows ? { id: state.value } : null;
           return Promise.resolve({ data: affected ? [affected] : [], error: null }).then(
+            onFulfilled,
+            onRejected,
+          );
+        }
+        // The All Transactions tab asks for the latest 100 rows with no filter.
+        if (
+          table === "transactions" &&
+          state.limited &&
+          !state.cols.includes("profiles(email)")
+        ) {
+          return Promise.resolve({ data: hoisted.allTransactions, error: null }).then(
             onFulfilled,
             onRejected,
           );
@@ -221,6 +302,18 @@ vi.mock("@/integrations/supabase/client", () => {
     if (table === "profiles" && cols === "referred_by") {
       return { data: hoisted.fallbackReferrals, error: null };
     }
+    if (table === "transactions" && cols.includes("profiles(email)")) {
+      // profiles has no email column in this database, so PostgREST rejects the
+      // embed; admin.tsx must fall back to the plain select + email RPC.
+      return {
+        data: null,
+        error: {
+          code: "PGRST200",
+          message:
+            "Could not find a relationship between 'transactions' and 'profiles' in the schema cache",
+        },
+      };
+    }
     if (table === "transactions" && cols === "user_id,type,amount,status") {
       return { data: hoisted.fallbackTransactions, error: null };
     }
@@ -230,7 +323,7 @@ vi.mock("@/integrations/supabase/client", () => {
   return {
     supabase: {
       from: (table: string) => ({
-        select: (cols: string) => makeBuilder(table, resultFor(table, cols)),
+        select: (cols: string) => makeBuilder(table, resultFor(table, cols), cols),
         update: (payload: Record<string, unknown>) =>
           makeBuilder(table, { data: null, error: null }).update(payload),
       }),
@@ -548,5 +641,94 @@ describe("Admin user management tab", () => {
       expect(toast.error).toHaveBeenCalledWith("Only admins can perform this action."),
     );
     expect(hoisted.updates).toHaveLength(0);
+  });
+});
+
+describe("Admin panel layout and All Transactions tab", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    hoisted.updates.length = 0;
+    hoisted.isAdmin = true;
+    hoisted.affectedRows = true;
+    hoisted.primaryEmailError = null;
+    hoisted.aggregateRpcError = false;
+  });
+
+  const openTransactionsTab = async () => {
+    render(<Admin />);
+    const sidebar = screen.getByRole("navigation", { name: "Admin sections" });
+    fireEvent.click(within(sidebar).getByRole("button", { name: /All Transactions/ }));
+    return sidebar;
+  };
+
+  it("lists the sections in a left sidebar and drops the old description", async () => {
+    render(<Admin />);
+
+    const sidebar = screen.getByRole("navigation", { name: "Admin sections" });
+    for (const name of [
+      /Pending Deposits/,
+      /Users/,
+      /Pending Withdrawals/,
+      /KYC Verifications/,
+      /Support Tickets/,
+      /Announcements/,
+      /All Transactions/,
+    ]) {
+      expect(within(sidebar).getByRole("button", { name })).toBeInTheDocument();
+    }
+
+    expect(
+      screen.queryByText(/Approve deposits \(pays 10% referral bonus\)/),
+    ).not.toBeInTheDocument();
+    // The refresh control now lives in the sidebar instead of the old tab row.
+    expect(within(sidebar).getByRole("button", { name: "Refresh" })).toBeInTheDocument();
+  });
+
+  it("renders every recent transaction with email, type, amount, status and hash", async () => {
+    await openTransactionsTab();
+
+    for (const header of [
+      "Date/Time",
+      "User Email",
+      "Type",
+      "Amount",
+      "Status",
+      "Details",
+    ]) {
+      expect(await screen.findByRole("columnheader", { name: header })).toBeInTheDocument();
+    }
+
+    // Emails resolve through the admin_user_emails RPC because profiles has no
+    // email column to embed.
+    expect((await screen.findAllByText("bob@example.com")).length).toBe(2);
+
+    const bonus = screen.getByText("Referral Bonus").closest("tr") as HTMLTableRowElement;
+    expect(within(bonus).getByText("bob@example.com")).toBeInTheDocument();
+    expect(within(bonus).getByText("$20.00")).toHaveClass("text-emerald-400");
+    expect(within(bonus).getByText("completed")).toBeInTheDocument();
+    expect(within(bonus).getByText("—")).toBeInTheDocument();
+
+    const withdrawalAmount = screen.getByText("-$50.00");
+    expect(withdrawalAmount).toHaveClass("text-destructive");
+    const withdrawal = withdrawalAmount.closest("tr") as HTMLTableRowElement;
+    expect(within(withdrawal).getByText("Withdrawal")).toBeInTheDocument();
+    expect(within(withdrawal).getByText("pending")).toBeInTheDocument();
+    expect(within(withdrawal).getByText("wd-1234567890a…")).toBeInTheDocument();
+    expect(within(withdrawal).getByText("BEP20")).toBeInTheDocument();
+
+    const adRow = screen.getByText("Ads Earning").closest("tr") as HTMLTableRowElement;
+    expect(within(adRow).getByText("rejected")).toBeInTheDocument();
+    expect(within(adRow).getByText("bob@example.com")).toBeInTheDocument();
+
+    const deposit = screen.getByText("0xabcdef123456…").closest("tr") as HTMLTableRowElement;
+    expect(within(deposit).getByText("$500.00")).toHaveClass("text-emerald-400");
+  });
+
+  it("counts the loaded transactions in the sidebar tab", async () => {
+    await openTransactionsTab();
+
+    expect(
+      await screen.findByRole("button", { name: "All Transactions (4)" }),
+    ).toBeInTheDocument();
   });
 });
