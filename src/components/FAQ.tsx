@@ -3,24 +3,28 @@ import { ChevronDown } from "lucide-react";
 
 const faqs = [
   {
+    q: "What cryptocurrency do you accept?",
+    a: "We accept USDT on BEP20 and Solana networks only. Deposits sent on any other network cannot be credited to your account.",
+  },
+  {
+    q: "How often can I withdraw?",
+    a: "Every 7 days, with a minimum of $50 and maximum of $200 per request.",
+  },
+  {
+    q: "How does the referral work?",
+    a: "Earn 10% of your referred user's deposit instantly. Share your referral link from your dashboard — the bonus lands in your balance as soon as their deposit is confirmed.",
+  },
+  {
     q: "What is the minimum deposit?",
-    a: "The smallest plan starts at $60. From there you can move up to $120, $180 or $250 at any time — the bigger the deposit, the larger the daily profit.",
+    a: "Plan 1 starts at $60. Plans then step up to $120, $180 and $250, and every plan runs for 365 days.",
   },
   {
-    q: "How do I deposit, and how long does it take?",
-    a: "Deposit from your wallet on the dashboard. Funds are credited as soon as the transfer is confirmed on the network, and your plan starts earning from that moment.",
+    q: "Which plans unlock Ads Rewards?",
+    a: "Plan 2, Plan 3 and Plan 4 unlock Watch Ads & Earn. Plan 1 does not include ads rewards.",
   },
   {
-    q: "When can I withdraw, and how fast are payouts?",
-    a: "Any time, day or night. Withdrawal requests are approved instantly during working hours and reach your wallet within minutes; network congestion is the only thing that can slow it down.",
-  },
-  {
-    q: "Is there a fee on deposits or withdrawals?",
-    a: "Roket charges no deposit fee. Withdrawals are free too — you only pay the standard network fee that the blockchain itself collects.",
-  },
-  {
-    q: "What happens to my deposit when the 365 days are up?",
-    a: "At the end of your term your deposit stays in your wallet and is fully withdrawable, alongside any profit you have not already cashed out. You can also roll it straight into a new term.",
+    q: "What happens when my 365 days are up?",
+    a: "Your deposit stays in your balance and remains withdrawable, together with any profit you have not already cashed out. You can start a new plan at any time.",
   },
 ];
 
@@ -28,10 +32,10 @@ export function FAQ() {
   const [open, setOpen] = useState<number | null>(0);
 
   return (
-    <section className="mx-auto max-w-3xl px-6 py-20">
+    <section id="faq" className="mx-auto max-w-3xl px-6 py-20">
       <h2 className="text-center text-4xl font-bold">Frequently Asked Questions</h2>
       <p className="mx-auto mt-3 max-w-md text-center text-muted-foreground">
-        The short answers on deposits, withdrawals and terms.
+        The short answers on deposits, withdrawals, referrals and terms.
       </p>
 
       <div className="mt-10">
