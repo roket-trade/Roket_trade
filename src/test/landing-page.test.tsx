@@ -105,16 +105,20 @@ describe("Landing page", () => {
   it("lists the five journey steps in order", () => {
     renderLanding();
 
-    const steps = screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent);
-    expect(steps).toEqual(
-      expect.arrayContaining([
-        "Create Account & Complete KYC",
-        "Deposit USDT",
-        "Choose a Plan",
-        "Earn Daily Profits & Refer",
-        "Withdraw (Every 7 days)",
-      ]),
-    );
+    const section = screen
+      .getByRole("heading", { name: "How It Works" })
+      .closest("section") as HTMLElement;
+    const steps = within(section)
+      .getAllByRole("heading", { level: 3 })
+      .map((h) => h.textContent);
+
+    expect(steps).toEqual([
+      "Create Account & Complete KYC",
+      "Deposit USDT",
+      "Choose a Plan",
+      "Earn Daily Profits & Refer",
+      "Withdraw (Every 7 days)",
+    ]);
   });
 
   it("answers the crypto, withdrawal and referral questions", () => {
