@@ -13,12 +13,13 @@ type Tx = {
   real: boolean;
 };
 
-/** Shape of the columns we read from `public.transactions`. */
+/** Shape of the columns we read from `public.transactions` / the RPC. */
 type RealRow = {
   id: string;
   type: string | null;
   amount: number | null;
   created_at: string | null;
+  user_name: string | null;
 };
 
 const MAX_ROWS = 5;
@@ -74,6 +75,13 @@ function makeSim(when = new Date()): Tx {
   };
 }
 
+export const maskName = (name: string | null): string => {
+  if (!name) return "Roket User";
+  const parts = name.trim().split(" ");
+  if (parts.length > 1) return `${parts[0]} ${parts[1][0]}.`;
+  return parts[0];
+};
+
 function makeReal(row: RealRow): Tx | null {
   const action: Action | null =
     row.type === "deposit" ? "Deposit" : row.type === "withdrawal" ? "Withdrawal" : null;
@@ -85,8 +93,8 @@ function makeReal(row: RealRow): Tx | null {
   const when = row.created_at ? new Date(row.created_at) : new Date();
   const time = Number.isNaN(when.getTime()) ? clock(new Date()) : clock(when);
 
-  // Customer identities stay private on the public landing page.
-  return { key: `real-${row.id}`, name: "Verified User", action, amount, time, real: true };
+  // Customer identities stay private on the public landing page; show a masked name.
+  return { key: `real-${row.id}`, name: maskName(row.user_name), action, amount, time, real: true };
 }
 
 function Icon({ action }: { action: Action }) {

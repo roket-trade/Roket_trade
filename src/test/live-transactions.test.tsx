@@ -62,7 +62,7 @@ describe("LiveTransactions", () => {
   it("merges the latest completed Supabase transactions into the simulated feed", async () => {
     render(<LiveTransactions />);
 
-    await waitFor(() => expect(screen.getAllByText("Verified User")).toHaveLength(2));
+    await waitFor(() => expect(screen.getAllByText("Roket User")).toHaveLength(2));
 
     expect(screen.getByText("+$250")).toBeInTheDocument();
     expect(screen.getByText("−$75")).toBeInTheDocument();
@@ -75,7 +75,7 @@ describe("LiveTransactions", () => {
     db.rpcFails = true;
     render(<LiveTransactions />);
 
-    await waitFor(() => expect(screen.getAllByText("Verified User")).toHaveLength(2));
+    await waitFor(() => expect(screen.getAllByText("Roket User")).toHaveLength(2));
     expect(screen.getByText("+$250")).toBeInTheDocument();
   });
 
@@ -85,7 +85,7 @@ describe("LiveTransactions", () => {
     render(<LiveTransactions />);
 
     await waitFor(() => expect(screen.getAllByRole("listitem")).toHaveLength(3));
-    expect(screen.queryByText("Verified User")).toBeNull();
+    expect(screen.queryByText("Roket User")).toBeNull();
   });
 
   it("keeps looping the merged feed without overflowing the list", async () => {
@@ -95,7 +95,7 @@ describe("LiveTransactions", () => {
     await act(async () => {
       await Promise.resolve();
     });
-    expect(screen.getAllByText("Verified User")).toHaveLength(2);
+    expect(screen.getAllByText("Roket User")).toHaveLength(2);
 
     act(() => {
       vi.advanceTimersByTime(30000);
@@ -103,6 +103,6 @@ describe("LiveTransactions", () => {
 
     const items = screen.getAllByRole("listitem");
     expect(items.length).toBeLessThanOrEqual(5);
-    expect(screen.getAllByText("Verified User").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Roket User").length).toBeGreaterThan(0);
   });
 });

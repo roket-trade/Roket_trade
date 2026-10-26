@@ -2,14 +2,16 @@
 --
 -- The transactions table is protected by RLS (users read their own rows, admins
 -- read all), so an anonymous visitor can never see the feed. This SECURITY
--- DEFINER function exposes only what the widget renders — type, amount and
--- timestamp — and never the user id, wallet address or transaction hash.
+-- DEFINER function exposes only a masked display name (from profiles.full_name),
+-- type, amount and timestamp — never the user id, wallet address or transaction
+-- hash.
 CREATE OR REPLACE FUNCTION public.recent_public_transactions(row_limit integer DEFAULT 5)
 RETURNS TABLE (
   id text,
   type text,
   amount numeric,
-  created_at timestamptz
+  created_at timestamptz,
+  user_name text
 )
 LANGUAGE sql
 STABLE
@@ -20,8 +22,10 @@ AS $$
     t.id::text,
     t.type,
     t.amount,
-    t.created_at
+    t.created_at,
+    p.full_name AS user_name
   FROM public.transactions t
+  LEFT JOIN public.profiles p ON p.id = t.user_id
   WHERE t.type IN ('deposit', 'withdrawal')
     AND t.status = 'completed'
     AND t.amount IS NOT NULL
