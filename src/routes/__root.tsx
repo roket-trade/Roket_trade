@@ -107,6 +107,13 @@ function RootShell({ children }: { children: ReactNode }) {
     <html lang="en">
       <head>
         <HeadContent />
+        <script
+          type="text/javascript"
+          dangerouslySetInnerHTML={{
+            __html:
+              'window.$crisp=[];window.CRISP_WEBSITE_ID="31ab4ec2-ac77-432d-9d61-234b2b91f7b9";(function(){d=document;s=d.createElement("script");s.src="https://client.crisp.chat/l.js";s.async=1;d.getElementsByTagName("head")[0].appendChild(s);})();',
+          }}
+        />
       </head>
       <body>
         {children}

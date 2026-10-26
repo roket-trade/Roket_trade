@@ -197,3 +197,8 @@
 @utility tx-in {
   animation: tx-in 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
+/* Hide Crisp default chat bubble so custom UI controls it */
+#crisp-chatbox {
+  display: none !important;
+}
+

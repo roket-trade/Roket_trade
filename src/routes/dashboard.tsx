@@ -9,8 +9,8 @@ import {
   Gift,
   Lock,
   Mail,
+  MessageSquare,
   Pencil,
-  Send,
   Ticket,
   TrendingDown,
   TrendingUp,
@@ -1974,15 +1974,21 @@ function DashboardContent() {
                 </div>
                 <ul className="mt-2 space-y-1">
                   <li>
-                    <a
-                      href="https://t.me/roket_trade"
-                      target="_blank"
-                      rel="noreferrer"
-                      className="flex items-center gap-3 rounded-lg px-2 py-2 text-sm text-muted-foreground transition hover:bg-gray-950/60 hover:text-blue-400"
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const crisp = (window as any).$crisp;
+                        if (crisp) {
+                          crisp.push(["set", "user:email", [user?.email ?? ""]]);
+                          crisp.push(["set", "user:nickname", [profile?.full_name ?? ""]]);
+                          crisp.push(["do", "chat:open"]);
+                        }
+                      }}
+                      className="flex w-full items-center gap-3 rounded-lg px-2 py-2 text-sm text-muted-foreground transition hover:bg-gray-950/60 hover:text-sky-400"
                     >
-                      <Send className="h-4 w-4 text-blue-400" aria-hidden="true" />
-                      <span>Message on Telegram</span>
-                    </a>
+                      <MessageSquare className="h-4 w-4 text-sky-400" aria-hidden="true" />
+                      <span>Live Chat</span>
+                    </button>
                   </li>
                   <li>
                     <button
