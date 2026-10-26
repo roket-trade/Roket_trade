@@ -285,8 +285,8 @@ describe("Dashboard top summary cards", () => {
 
     const help = screen.getByRole("heading", { name: "Need Help?" }).closest("section");
     expect(help?.className).toContain("border-l-rose-500");
-    // Telegram was replaced by the Crisp Live Chat button, which the dashboard
-    // wires to Crisp.chat.open().
+    // Telegram was replaced by the Tawk.to Live Chat button, which the
+    // dashboard wires to Tawk_API.maximize().
     expect(screen.getByRole("button", { name: "Live Chat" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Submit A Ticket" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Email Us: info@roket.bond" })).toHaveAttribute(

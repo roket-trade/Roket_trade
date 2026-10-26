@@ -1,5 +1,4 @@
 import { Link } from "@tanstack/react-router";
-import { Crisp } from "crisp-sdk-web";
 import { useAuth } from "@/components/AuthProvider";
 import { Twitter, Send, Facebook, Youtube, Instagram, type LucideIcon } from "lucide-react";
 
@@ -18,12 +17,11 @@ const linkClass = "transition-colors hover:text-primary";
 export function Footer() {
   const { user } = useAuth();
 
-  // Same entry point as the dashboard: the Crisp bubble is hidden globally, so
-  // it has to be shown again before the chat window is opened.
+  // Opens the Tawk.to chat widget, which stays hidden behind our own buttons.
   const openLiveChat = () => {
-    if (typeof window === "undefined") return;
-    Crisp.chat.show();
-    Crisp.chat.open();
+    if (typeof window !== "undefined" && window.Tawk_API && window.Tawk_API.maximize) {
+      window.Tawk_API.maximize();
+    }
   };
 
   return (

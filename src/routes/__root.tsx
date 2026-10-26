@@ -10,12 +10,26 @@ import {
 } from "@tanstack/react-router";
 import { useEffect, type ReactNode } from "react";
 import { Toaster } from "sonner";
-import { Crisp } from "crisp-sdk-web";
 
 import appCss from "../styles.css?url";
 import { reportLovableError } from "../lib/lovable-error-reporting";
 import { AuthProvider } from "@/components/AuthProvider";
 import { PaymentVerificationProvider } from "@/components/PaymentVerificationProvider";
+
+/**
+ * Tawk.to live-chat widget. Loaded from the document head so `Tawk_API` is
+ * available before any "Live Chat" button can be clicked. The floating bubble is
+ * hidden in styles.css; the app opens the chat from its own buttons.
+ */
+const TAWK_SCRIPT = `var Tawk_API=Tawk_API||{}, Tawk_LoadStart=new Date();
+(function(){
+var s1=document.createElement("script"),s0=document.getElementsByTagName("script")[0];
+s1.async=true;
+s1.src='https://embed.tawk.to/6adfaf08762350347802ccfd/1k5ss7eo0';
+s1.charset='UTF-8';
+s1.setAttribute('crossorigin','*');
+s0.parentNode.insertBefore(s1,s0);
+})();`;
 
 function NotFoundComponent() {
   return (
@@ -89,13 +103,17 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     ],
     links: [
       { rel: "preconnect", href: "https://fonts.googleapis.com" },
-      { rel: "stylesheet", href: "https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=DM+Sans:wght@400;500;700&display=swap" },
+      {
+        rel: "stylesheet",
+        href: "https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=DM+Sans:wght@400;500;700&display=swap",
+      },
       {
         rel: "stylesheet",
         href: appCss,
       },
       { rel: "icon", type: "image/png", href: "/favicon.png" },
     ],
+    scripts: [{ children: TAWK_SCRIPT }],
   }),
   shellComponent: RootShell,
   component: RootComponent,
@@ -119,24 +137,6 @@ function RootShell({ children }: { children: ReactNode }) {
 
 function RootComponent() {
   const { queryClient } = Route.useRouteContext();
-
-  useEffect(() => {
-    Crisp.configure("31ab4ec2-ac77-432d-9d61-234b2b91f7b9");
-    // The dashboard's "Live Chat" button is the only entry point, so the
-    // default bubble is hidden through the SDK (never through CSS, which would
-    // also hide the chat window opened by Crisp.chat.open()).
-    Crisp.chat.hide();
-
-    // Restore the hidden state once the visitor closes the chat window, so the
-    // default bubble never sits on top of the app UI.
-    Crisp.chat.onChatClosed(() => {
-      Crisp.chat.hide();
-    });
-
-    return () => {
-      Crisp.chat.offChatClosed();
-    };
-  }, []);
 
   return (
     <QueryClientProvider client={queryClient}>

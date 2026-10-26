@@ -2,13 +2,13 @@ import type { ComponentType, ReactNode } from "react";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { QueryClient } from "@tanstack/react-query";
-import { cleanup, render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, fireEvent } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import "@/routes/__root";
 import "@/routes/dashboard";
 
-const { mockUser, mockProfile, crisp } = vi.hoisted(() => ({
+const { mockUser, mockProfile } = vi.hoisted(() => ({
   mockUser: {
     id: "11111111-2222-3333-4444-555555555555",
     email: "trader@example.com",
@@ -33,42 +33,34 @@ const { mockUser, mockProfile, crisp } = vi.hoisted(() => ({
     plan_started_at: null,
     plan_expires_at: null,
   },
-  crisp: {
-    configure: vi.fn(),
-    chat: {
-      hide: vi.fn(),
-      show: vi.fn(),
-      open: vi.fn(),
-      close: vi.fn(),
-      onChatClosed: vi.fn(),
-      offChatClosed: vi.fn(),
-    },
-    user: {
-      setEmail: vi.fn(),
-      setNickname: vi.fn(),
-    },
-  },
 }));
 
 const { routeOptions, rootRouteOptions } = vi.hoisted(() => ({
   routeOptions: {} as { component?: ComponentType },
-  rootRouteOptions: {} as { component?: ComponentType },
+  rootRouteOptions: {} as {
+    component?: ComponentType;
+    head?: (() => { scripts?: Array<{ children?: string }> }) | undefined;
+  },
 }));
-
-vi.mock("crisp-sdk-web", () => ({ Crisp: crisp }));
 
 vi.mock("@tanstack/react-router", () => ({
   createFileRoute: () => (options: { component: ComponentType }) => {
     routeOptions.component = options.component;
     return options;
   },
-  createRootRouteWithContext: () => (options: { component: ComponentType }) => {
-    rootRouteOptions.component = options.component;
-    return {
-      ...options,
-      useRouteContext: () => ({ queryClient: new QueryClient() }),
-    };
-  },
+  createRootRouteWithContext:
+    () =>
+    (options: {
+      component: ComponentType;
+      head?: () => { scripts?: Array<{ children?: string }> };
+    }) => {
+      rootRouteOptions.component = options.component;
+      rootRouteOptions.head = options.head;
+      return {
+        ...options,
+        useRouteContext: () => ({ queryClient: new QueryClient() }),
+      };
+    },
   Outlet: () => <div data-testid="outlet" />,
   Scripts: () => null,
   HeadContent: () => null,
@@ -141,68 +133,50 @@ const DashboardPage = () => {
   return <Component />;
 };
 
-const RootPage = () => {
-  const Component = rootRouteOptions.component;
-  if (!Component) throw new Error("root route component was not captured");
-  return <Component />;
-};
-
 beforeEach(() => {
-  crisp.configure.mockClear();
-  crisp.chat.hide.mockClear();
-  crisp.chat.show.mockClear();
-  crisp.chat.open.mockClear();
-  crisp.chat.onChatClosed.mockClear();
-  crisp.chat.offChatClosed.mockClear();
-  crisp.user.setEmail.mockClear();
-  crisp.user.setNickname.mockClear();
+  window.Tawk_API = { maximize: vi.fn() };
 });
 
 afterEach(() => {
   cleanup();
+  delete window.Tawk_API;
   vi.restoreAllMocks();
 });
 
-describe("Crisp Live Chat", () => {
-  it("hides the widget through the SDK instead of CSS, so open() is not overridden", () => {
+describe("Tawk.to Live Chat", () => {
+  it("hides the default bubble through CSS and no longer references Crisp", () => {
     const styles = readFileSync(path.resolve(__dirname, "../styles.css"), "utf8");
 
+    expect(styles).toContain('iframe[title="chat widget"]');
+    expect(styles).toMatch(/iframe\[title="chat widget"\]\s*{\s*display:\s*none\s*!important;/);
     expect(styles).not.toContain("#crisp-chatbox");
-    expect(styles).not.toMatch(/display:\s*none\s*!important/);
   });
 
-  it("configures Crisp once and keeps the default bubble hidden until the chat closes", () => {
-    render(<RootPage />);
+  it("loads the Tawk.to embed script from the document head", () => {
+    const head = rootRouteOptions.head?.();
+    const scripts = head?.scripts ?? [];
+    const inline = scripts.map((script) => script.children ?? "").join("\n");
 
-    expect(crisp.configure).toHaveBeenCalledWith("31ab4ec2-ac77-432d-9d61-234b2b91f7b9");
-    expect(crisp.chat.hide).toHaveBeenCalledTimes(1);
-    expect(crisp.chat.onChatClosed).toHaveBeenCalledTimes(1);
-
-    const onClosed = crisp.chat.onChatClosed.mock.calls.at(0)?.[0] as (() => void) | undefined;
-    expect(onClosed).toBeTypeOf("function");
-    onClosed?.();
-    expect(crisp.chat.hide).toHaveBeenCalledTimes(2);
+    expect(inline).toContain("https://embed.tawk.to/6adfaf08762350347802ccfd/1k5ss7eo0");
+    expect(inline).toContain("Tawk_API");
+    expect(inline).toContain("Tawk_LoadStart");
   });
 
-  it("opens the chat window from the dashboard button", async () => {
-    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+  it("opens the chat window from the dashboard Live Chat button", async () => {
     render(<DashboardPage />);
 
     const button = await screen.findByRole("button", { name: "Live Chat" });
     fireEvent.click(button);
 
-    expect(log).toHaveBeenCalledWith("Live Chat button clicked");
-    expect(crisp.user.setEmail).toHaveBeenCalledWith("trader@example.com");
-    expect(crisp.user.setNickname).toHaveBeenCalledWith("Test Trader");
+    expect(window.Tawk_API?.maximize).toHaveBeenCalledTimes(1);
+  });
 
-    // Visibility is restored before opening: the widget is hidden by the SDK,
-    // and opening a hidden chatbox leaves the chat window invisible.
-    expect(crisp.chat.show).toHaveBeenCalledTimes(1);
-    expect(crisp.chat.open).toHaveBeenCalledTimes(1);
-    const showOrder = crisp.chat.show.mock.invocationCallOrder[0] ?? 0;
-    const openOrder = crisp.chat.open.mock.invocationCallOrder[0] ?? Number.MAX_SAFE_INTEGER;
-    expect(showOrder).toBeLessThan(openOrder);
+  it("does nothing when Tawk.to has not loaded yet", async () => {
+    delete window.Tawk_API;
+    render(<DashboardPage />);
 
-    await waitFor(() => expect(crisp.chat.open).toHaveBeenCalled());
+    const button = await screen.findByRole("button", { name: "Live Chat" });
+
+    expect(() => fireEvent.click(button)).not.toThrow();
   });
 });

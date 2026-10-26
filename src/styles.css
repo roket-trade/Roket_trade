@@ -154,14 +154,18 @@
   --font-sans: "DM Sans", sans-serif;
 }
 
-@utility bg-brand { background-image: var(--gradient-brand); }
+@utility bg-brand {
+  background-image: var(--gradient-brand);
+}
 @utility text-brand {
   background-image: var(--gradient-brand);
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
 }
-@utility shadow-glow { box-shadow: var(--shadow-glow); }
+@utility shadow-glow {
+  box-shadow: var(--shadow-glow);
+}
 
 @layer base {
   * {
@@ -173,7 +177,11 @@
     color: var(--color-foreground);
     font-family: var(--font-sans);
   }
-  h1, h2, h3 { font-family: var(--font-display); }
+  h1,
+  h2,
+  h3 {
+    font-family: var(--font-display);
+  }
 }
 
 @utility chart-glow {
@@ -198,3 +206,7 @@
   animation: tx-in 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
+/* Hide Tawk.to's default floating bubble — the app opens chat from its own buttons. */
+iframe[title="chat widget"] {
+  display: none !important;
+}

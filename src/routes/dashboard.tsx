@@ -25,7 +25,6 @@ import { AccountSuspendedOverlay } from "@/components/AccountSuspendedOverlay";
 import { HeaderAuthNav } from "@/components/HeaderAuthNav";
 import { RequireAuth } from "@/components/RequireAuth";
 import { supabase } from "@/integrations/supabase/client";
-import { Crisp } from "crisp-sdk-web";
 import type { Tables } from "@/integrations/supabase/types";
 import { createPlatformStats } from "@/lib/platform-stats";
 import type { PlatformStats } from "@/lib/platform-stats";
@@ -1658,21 +1657,13 @@ function DashboardContent() {
     toast.info("Plan cancellation is reviewed by support. Please contact support to proceed.");
   };
 
-  // Opens the Crisp chat window from the dashboard's own button. The widget is
-  // kept hidden by the SDK (see __root.tsx) so its default bubble never covers
-  // the UI — visibility has to be restored before opening, otherwise the chat
-  // window opens inside a hidden container and nothing appears on screen.
+  // Opens the Tawk.to chat window from the dashboard's own button. The default
+  // floating bubble is hidden in styles.css, so the widget only appears when a
+  // visitor asks for it.
   const openLiveChat = () => {
-    console.log("Live Chat button clicked");
-    if (typeof window === "undefined") return;
-
-    if (user) {
-      Crisp.user.setEmail(user.email ?? "");
-      Crisp.user.setNickname(profile?.full_name || "User");
+    if (typeof window !== "undefined" && window.Tawk_API && window.Tawk_API.maximize) {
+      window.Tawk_API.maximize();
     }
-
-    Crisp.chat.show();
-    Crisp.chat.open();
   };
 
   return (
