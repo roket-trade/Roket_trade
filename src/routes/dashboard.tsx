@@ -22,6 +22,7 @@ import { HilltopVideoAd } from "@/components/HilltopVideoAd";
 import { KycModal } from "@/components/KycModal";
 import { SupportModal } from "@/components/SupportModal";
 import { AccountSuspendedOverlay } from "@/components/AccountSuspendedOverlay";
+import { HeaderAuthNav } from "@/components/HeaderAuthNav";
 import { RequireAuth } from "@/components/RequireAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { Crisp } from "crisp-sdk-web";
@@ -1678,24 +1679,10 @@ function DashboardContent() {
     <div className="min-h-screen bg-background">
       <header className="border-b border-border/70">
         <div className="mx-auto flex max-w-5xl items-center justify-between gap-4 px-4 py-4">
-          <Link to="/">
+          <Link to="/" aria-label="Roket home">
             <img src="/logo.png" alt="Roket" className="h-9" />
           </Link>
-          <div className="flex items-center gap-2">
-            <Link
-              to="/"
-              className="hidden rounded-lg px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground sm:block"
-            >
-              Home
-            </Link>
-            <button
-              type="button"
-              onClick={signOut}
-              className="rounded-lg border border-border px-4 py-2 text-sm font-semibold text-foreground transition-colors hover:border-primary hover:text-primary"
-            >
-              Log out
-            </button>
-          </div>
+          <HeaderAuthNav current="dashboard" />
         </div>
       </header>
 

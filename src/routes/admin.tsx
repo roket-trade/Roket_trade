@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useState, type MouseEvent } from "react";
-import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { toast } from "sonner";
 import { Loader2 } from "lucide-react";
 
+import { HeaderAuthNav } from "@/components/HeaderAuthNav";
 import { RequireAdmin } from "@/components/RequireAdmin";
 import { supabase } from "@/integrations/supabase/client";
 import type { TablesUpdate } from "@/integrations/supabase/types";
@@ -375,7 +376,6 @@ function Admin() {
 }
 
 function AdminContent() {
-  const navigate = useNavigate();
   const [tab, setTab] = useState<Tab>("deposits");
   const [deposits, setDeposits] = useState<Tx[]>([]);
   const [withdrawals, setWithdrawals] = useState<Tx[]>([]);
@@ -512,11 +512,6 @@ function AdminContent() {
     setAggregates(map);
     setAggregatesError(error);
   }, []);
-
-  const signOut = async () => {
-    await supabase.auth.signOut();
-    navigate({ to: "/login", replace: true });
-  };
 
   const approveDeposit = async (tx: Tx) => {
     if (!tx.user_id) {
@@ -1121,8 +1116,7 @@ const openPlanModal = (user: AdminUser) => {
           <Link to="/"><img src="/logo.png" alt="Roket" className="h-9" /></Link>
           <div className="flex items-center gap-2">
             <span className="rounded-full bg-primary/15 px-3 py-1 text-xs font-bold uppercase tracking-widest text-primary">Admin</span>
-            <Link to="/dashboard" className="hidden rounded-lg px-3 py-2 text-sm text-muted-foreground hover:text-foreground sm:block">Dashboard</Link>
-            <button type="button" onClick={signOut} className="rounded-lg border border-border px-4 py-2 text-sm font-semibold hover:border-primary hover:text-primary">Log out</button>
+            <HeaderAuthNav current="other" />
           </div>
         </div>
       </header>

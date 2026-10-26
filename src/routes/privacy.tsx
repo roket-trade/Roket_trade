@@ -1,6 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { ArrowLeft } from "lucide-react";
 import { Footer } from "@/components/Footer";
+import { HeaderAuthNav } from "@/components/HeaderAuthNav";
 
 export const Route = createFileRoute("/privacy")({
   head: () => ({
@@ -58,12 +59,7 @@ function Privacy() {
           <ArrowLeft className="h-4 w-4" />
           Back to site
         </Link>
-        <Link
-          to="/signup"
-          className="rounded-lg bg-brand px-5 py-2 font-display text-sm font-bold text-primary-foreground"
-        >
-          Get Started
-        </Link>
+        <HeaderAuthNav current="other" />
       </header>
 
       <main className="mx-auto max-w-3xl px-4 pb-20 sm:px-6">

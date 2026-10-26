@@ -1,12 +1,11 @@
-import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { CandleChart } from "@/components/CandleChart";
 import { LiveTransactions } from "@/components/LiveTransactions";
 import { HowItWorks } from "@/components/HowItWorks";
 import { Features } from "@/components/Features";
 import { FAQ } from "@/components/FAQ";
 import { Footer } from "@/components/Footer";
-import { useAuth } from "@/components/AuthProvider";
-import { supabase } from "@/integrations/supabase/client";
+import { HeaderAuthNav } from "@/components/HeaderAuthNav";
 
 type Plan = { name: string; deposit: number; daily: number; popular?: boolean };
 
@@ -54,45 +53,13 @@ function Check() {
 }
 
 function Index() {
-  const navigate = useNavigate();
-  const { user, loading } = useAuth();
-
-  const logOut = async () => {
-    await supabase.auth.signOut();
-    navigate({ to: "/", replace: true });
-  };
-
   return (
     <div className="min-h-screen">
       <header className="mx-auto flex max-w-6xl items-center justify-between px-6 py-5">
-        <img src="/logo.png" alt="Roket" className="h-10" />
-        <nav className="flex items-center gap-2">
-          {loading ? null : user ? (
-            <>
-              <Link
-                to="/dashboard"
-                className="rounded-lg px-4 py-2 text-sm font-semibold text-muted-foreground transition-colors hover:text-foreground"
-              >
-                Dashboard
-              </Link>
-              <button type="button" onClick={logOut} className={cta}>
-                Log out
-              </button>
-            </>
-          ) : (
-            <>
-              <Link
-                to="/login"
-                className="rounded-lg px-4 py-2 text-sm font-semibold text-muted-foreground transition-colors hover:text-foreground"
-              >
-                Log in
-              </Link>
-              <Link to="/signup" className={cta}>
-                Sign Up
-              </Link>
-            </>
-          )}
-        </nav>
+        <Link to="/" aria-label="Roket home">
+          <img src="/logo.png" alt="Roket" className="h-10" />
+        </Link>
+        <HeaderAuthNav current="home" />
       </header>
 
       <section className="mx-auto grid max-w-6xl items-center gap-10 px-6 py-12 lg:grid-cols-2">
