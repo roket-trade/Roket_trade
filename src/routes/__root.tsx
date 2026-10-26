@@ -122,7 +122,20 @@ function RootComponent() {
 
   useEffect(() => {
     Crisp.configure("31ab4ec2-ac77-432d-9d61-234b2b91f7b9");
+    // The dashboard's "Live Chat" button is the only entry point, so the
+    // default bubble is hidden through the SDK (never through CSS, which would
+    // also hide the chat window opened by Crisp.chat.open()).
     Crisp.chat.hide();
+
+    // Restore the hidden state once the visitor closes the chat window, so the
+    // default bubble never sits on top of the app UI.
+    Crisp.chat.onChatClosed(() => {
+      Crisp.chat.hide();
+    });
+
+    return () => {
+      Crisp.chat.offChatClosed();
+    };
   }, []);
 
   return (
