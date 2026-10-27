@@ -30,6 +30,7 @@
 
 // deno-lint-ignore-file no-explicit-any
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { depositEmailHtml, depositEmailSubject } from "../_shared/email-templates.ts";
 
 const BSC_RPC_URL = Deno.env.get("BSC_RPC_URL") ?? "https://bsc-dataseed.binance.org/";
 const SOLANA_RPC_URL = Deno.env.get("SOLANA_RPC_URL") ?? "https://api.mainnet-beta.solana.com";
@@ -428,7 +429,102 @@ async function awardReferralBonus(
       depositId: depositTxId,
       message: error instanceof Error ? error.message : String(error),
     });
+
     return null;
+  }
+}
+
+type NotificationResult = { sent: boolean; id?: string | null; reason?: string };
+
+/**
+ * Email the depositor their receipt through the send-email Edge Function.
+ *
+ * Never throws: the deposit is already confirmed on-chain, so a mail problem
+ * (missing RESEND_API_KEY, unverified Resend sender, no address on the account)
+ * must not fail or retry the verification.
+ */
+async function sendDepositEmail(
+  admin: ReturnType<typeof createClient>,
+  args: {
+    userId: string;
+    amount: string;
+    planName: string;
+    expiresAt?: string | null;
+    txHash?: string | null;
+  },
+): Promise<NotificationResult> {
+  const supabaseUrl = Deno.env.get("SUPABASE_URL");
+  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  if (!supabaseUrl || !serviceKey) {
+    return { sent: false, reason: "missing_supabase_config" };
+  }
+
+  let email: string | null = null;
+  try {
+    // profiles has no email column; the address lives on the auth user.
+    const { data, error } = await admin.auth.admin.getUserById(args.userId);
+    if (error) {
+      console.warn("[verify-crypto-deposit] could not load depositor email", {
+        userId: args.userId,
+        message: error.message,
+      });
+    }
+    email = data?.user?.email ?? null;
+  } catch (error) {
+    console.warn("[verify-crypto-deposit] depositor email lookup threw", {
+      userId: args.userId,
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+
+  if (!email) {
+    return { sent: false, reason: "missing_email" };
+  }
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 15_000);
+  try {
+    const response = await fetch(`${supabaseUrl.replace(/\/+$/, "")}/functions/v1/send-email`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        Authorization: `Bearer ${serviceKey}`,
+      },
+      body: JSON.stringify({
+        to: email,
+        subject: depositEmailSubject(args),
+        html: depositEmailHtml(args),
+      }),
+      signal: controller.signal,
+    });
+    const payload = (await response.json().catch(() => null)) as {
+      ok?: boolean;
+      id?: string | null;
+      error?: string;
+    } | null;
+
+    if (!response.ok || !payload?.ok) {
+      console.error("[verify-crypto-deposit] deposit email failed", {
+        userId: args.userId,
+        status: response.status,
+        error: payload?.error,
+      });
+      return { sent: false, reason: payload?.error ?? `http_${response.status}` };
+    }
+
+    console.log("[verify-crypto-deposit] deposit email sent", {
+      userId: args.userId,
+      id: payload.id ?? null,
+    });
+    return { sent: true, id: payload.id ?? null };
+  } catch (error) {
+    console.error("[verify-crypto-deposit] deposit email request failed", {
+      userId: args.userId,
+      message: error instanceof Error ? error.message : String(error),
+    });
+    return { sent: false, reason: "request_failed" };
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -629,9 +725,11 @@ async function handle(request: Request): Promise<Response> {
   // skip it, and a referral problem cannot undo the verified deposit.
   const referral = await awardReferralBonus(admin, row.id);
 
+  const planName = normalizePlanName(row.plan_name, body.plan_id);
+  const expiresAt = new Date(now.getTime() + PLAN_DAYS * 24 * 60 * 60 * 1000);
+  let notification: NotificationResult | null = null;
+
   if (row.user_id) {
-    const planName = normalizePlanName(row.plan_name, body.plan_id);
-    const expiresAt = new Date(now.getTime() + PLAN_DAYS * 24 * 60 * 60 * 1000);
     const { error: profileError } = await admin
       .from("profiles")
       .update({
@@ -657,6 +755,16 @@ async function handle(request: Request): Promise<Response> {
         200,
       );
     }
+
+    // The plan is active — tell the user. Best effort: the response stays 200
+    // and the deposit stays completed even when the mail cannot be delivered.
+    notification = await sendDepositEmail(admin, {
+      userId: row.user_id,
+      amount: outcome.received,
+      planName,
+      expiresAt: expiresAt.toISOString(),
+      txHash: chainHash,
+    });
   }
 
   return json(
@@ -666,8 +774,9 @@ async function handle(request: Request): Promise<Response> {
       tx_hash: txHash,
       received: outcome.received,
       expected: outcome.expected,
-      plan_name: normalizePlanName(row.plan_name, body.plan_id),
+      plan_name: planName,
       referral,
+      email: notification,
     },
     200,
   );

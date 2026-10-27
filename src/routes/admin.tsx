@@ -7,6 +7,10 @@ import { HeaderAuthNav } from "@/components/HeaderAuthNav";
 import { RequireAdmin } from "@/components/RequireAdmin";
 import { supabase } from "@/integrations/supabase/client";
 import type { TablesUpdate } from "@/integrations/supabase/types";
+import {
+  withdrawalEmailHtml,
+  withdrawalEmailSubject,
+} from "../../supabase/functions/_shared/email-templates.ts";
 
 export const Route = createFileRoute("/admin")({
   head: () => ({
@@ -743,6 +747,44 @@ function AdminContent() {
     }
   };
 
+  // Email the user about a withdrawal decision through the send-email Edge
+  // Function. Deliberately best effort: the ledger write already happened, so a
+  // mail failure must never surface as a failed approval. The address comes from
+  // the shared email map (profiles has no email column) or a targeted
+  // admin_user_emails() lookup when the row was loaded before the map warmed up.
+  const notifyWithdrawal = useCallback(
+    async (tx: Tx, status: "completed" | "rejected") => {
+      if (!tx.user_id) return;
+      try {
+        let to = emails[tx.user_id];
+        if (!to) {
+          const { map } = await fetchEmails([tx.user_id]);
+          to = map[tx.user_id];
+          if (to) setEmails((prev) => ({ ...prev, ...map }));
+        }
+        if (!to) {
+          console.warn("[admin] withdrawal email skipped: no address for user", tx.user_id);
+          return;
+        }
+
+        const amount = money(Math.abs(Number(tx.amount)));
+        const { error } = await supabase.functions.invoke("send-email", {
+          body: {
+            to,
+            subject: withdrawalEmailSubject({ amount, status }),
+            html: withdrawalEmailHtml({ amount, status, walletAddress: tx.wallet_address }),
+          },
+        });
+        if (error) throw error;
+        console.log("[admin] withdrawal email sent", { userId: tx.user_id, status });
+      } catch (err) {
+        console.error("[admin] withdrawal email failed:", err);
+        toast.warning("Withdrawal updated, but the confirmation email failed to send.");
+      }
+    },
+    [emails],
+  );
+
   const approveWithdrawal = async (tx: Tx) => {
     setBusyId(tx.id);
     try {
@@ -750,6 +792,7 @@ function AdminContent() {
       if (error) throw error;
       setWithdrawals((w) => w.filter((t) => t.id !== tx.id));
       toast.success("Withdrawal completed.");
+      void notifyWithdrawal(tx, "completed");
       void refreshAggregates();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Couldn't approve withdrawal.");
@@ -779,6 +822,7 @@ function AdminContent() {
       if (tErr) throw tErr;
       setWithdrawals((w) => w.filter((t) => t.id !== tx.id));
       toast.success(`Rejected. ${money(refund)} refunded.`);
+      void notifyWithdrawal(tx, "rejected");
       void refreshAggregates();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Couldn't reject withdrawal.");

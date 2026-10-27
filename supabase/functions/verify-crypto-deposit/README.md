@@ -50,7 +50,9 @@ caller cannot underpay while claiming a cheaper plan.
 - `completed` — deposit flipped to `completed`; `profiles.plan_name`,
   `plan_started_at` and `plan_expires_at` (now + 365 days) were set. The
   response also carries `referral`, e.g. `{"awarded": true, "bonus": 6}` for the
-  referrer's 10% bonus (see below).
+  referrer's 10% bonus (see below), and `email`, e.g.
+  `{"sent": true, "id": "<resend-id>"}` for the depositor's receipt (see
+  [Deposit receipt email](#deposit-receipt-email)).
 - `pending` (HTTP 200) — well-formed hash, not mined/confirmed yet. The pg_cron
   job retries it on the next tick (bounded by `verification_attempts`).
 - `rejected` (HTTP 200) — definitive mismatch **or** an unusable hash / RPC
@@ -81,6 +83,20 @@ const { data, error } = await admin.rpc("process_referral_bonus", {
 The bonus never affects the deposit: missing referrer profiles, self-referrals,
 legacy short-code `referred_by` values and a missing RPC are logged and reported
 in `referral`, while the deposit still stays `completed`.
+
+## Deposit receipt email
+
+Once the deposit is `completed` **and** `profiles.plan_name` has been updated, the
+function calls the [`send-email`](../send-email/README.md) Edge Function with the
+service-role key to mail the depositor their receipt (dark layout, neon-green
+success accent, amount, plan and expiry).
+
+- The address comes from `auth.users` via `admin.auth.admin.getUserById()` —
+  `profiles` has no email column.
+- Delivery is best effort: a missing `RESEND_API_KEY`, an unverified Resend
+  sender or an account without an email is logged and reported in the response's
+  `email` field (`{ "sent": false, "reason": "missing_email" }`), and never
+  fails or retries the verification.
 
 ## Deploy
 
