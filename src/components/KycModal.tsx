@@ -126,6 +126,41 @@ export function KycModal({
         return;
       }
 
+      // Welcome Bonus: grant $2.00 once when KYC is first verified.
+      if (data.welcome_bonus_claimed === false) {
+        try {
+          const currentExtra = Number(data.extra_balance ?? 0);
+          const nextExtra = Math.round((currentExtra + 2) * 100) / 100;
+
+          const { error: balanceError } = await supabase
+            .from("profiles")
+            .update({ extra_balance: nextExtra })
+            .eq("id", userId);
+          if (balanceError) throw balanceError;
+
+          const { error: claimedError } = await supabase
+            .from("profiles")
+            .update({ welcome_bonus_claimed: true })
+            .eq("id", userId);
+          if (claimedError) throw claimedError;
+
+          const { error: bonusTxError } = await supabase.from("transactions").insert({
+            user_id: userId,
+            type: "welcome_bonus",
+            amount: 2,
+            status: "completed",
+            description: "Welcome Bonus for completing KYC",
+          });
+          if (bonusTxError) throw bonusTxError;
+
+          // Reflect the bonus in the profile handed back to the dashboard.
+          (data as Profile).extra_balance = nextExtra;
+          (data as Profile).welcome_bonus_claimed = true;
+        } catch (bonusErr) {
+          console.error("[KYC] welcome bonus distribution failed", bonusErr);
+        }
+      }
+
       console.log("[KYC] profile persisted as verified", {
         userId,
         kycStatus: data.kyc_status,

@@ -98,7 +98,7 @@ vi.mock("@/integrations/supabase/client", () => {
         if (table === "transactions") {
           if (filters["type"] === "daily_profit") {
             data = [{ amount: 9.5 }];
-          } else if (filters["type"] === "ad_earning") {
+          } else if (filters["type"]?.includes("ad_earning")) {
             data = [
               { id: "ad-1", amount: 0.1, created_at: "2026-09-01T00:00:00.000Z" },
               { id: "ad-2", amount: 0.05, created_at: "2026-09-02T00:00:00.000Z" },

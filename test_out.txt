@@ -1,0 +1,4 @@
+
+[1m[30m[46m RUN [49m[39m[22m [36mv4.1.12 [39m[90mx:/Roket/Roket_git/Roket_trade[39m
+
+Terminate batch job (Y/N)? 

@@ -1072,7 +1072,7 @@ function DashboardContent() {
           .from("transactions")
           .select("id,amount,created_at")
           .eq("user_id", currentUser.id)
-          .eq("type", "ad_earning")
+          .in("type", ["ad_earning", "welcome_bonus"])
           .order("created_at", { ascending: false })
           .limit(5),
         supabase
@@ -1301,7 +1301,7 @@ function DashboardContent() {
       .from("transactions")
       .select("id,amount,created_at")
       .eq("user_id", userId)
-      .eq("type", "ad_earning")
+      .in("type", ["ad_earning", "welcome_bonus"])
       .order("created_at", { ascending: false })
       .limit(5);
     if (data) setAdEarnings(data as AdEarning[]);

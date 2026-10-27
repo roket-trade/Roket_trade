@@ -73,6 +73,7 @@ export type Database = {
           referral_code: string
           referred_by: string | null
           saved_wallets: Json | null
+          welcome_bonus_claimed: boolean
         }
         Insert: {
           address?: string | null
@@ -96,6 +97,7 @@ export type Database = {
           referral_code?: string
           referred_by?: string | null
           saved_wallets?: Json | null
+           welcome_bonus_claimed?: boolean
         }
         Update: {
           address?: string | null
@@ -119,6 +121,7 @@ export type Database = {
           referral_code?: string
           referred_by?: string | null
           saved_wallets?: Json | null
+           welcome_bonus_claimed?: boolean
         }
         Relationships: []
       }
