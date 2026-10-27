@@ -5,8 +5,11 @@ Supabase Edge Function that delivers a fully rendered email through the
 
 ```
 supabase/functions/send-email/index.ts
-supabase/functions/_shared/email-templates.ts   # dark layout + templates
+src/lib/email-templates.ts   # dark layout + templates used by the app
 ```
+
+This function has no local imports: it is safe to paste straight into the
+Supabase Dashboard editor.
 
 ## Request
 
@@ -24,7 +27,7 @@ supabase/functions/_shared/email-templates.ts   # dark layout + templates
 | ---------- | -------- | ------------------------------------------------------------------- |
 | `to`       | yes      | One address, or up to 5 in an array                                 |
 | `subject`  | yes      | Max 200 characters                                                  |
-| `html`     | yes      | Max 200 KB; render it with `_shared/email-templates.ts`             |
+| `html`     | yes      | Max 200 KB; render it with `src/lib/email-templates.ts`             |
 | `from`     | no       | Defaults to `EMAIL_FROM`, then `Roket Support <support@roket.bond>` |
 | `reply_to` | no       | Defaults to `EMAIL_REPLY_TO`, then the `from` address               |
 

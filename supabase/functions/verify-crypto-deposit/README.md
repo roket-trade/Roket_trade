@@ -104,6 +104,10 @@ success accent, amount, plan and expiry).
 supabase functions deploy verify-crypto-deposit --no-verify-jwt
 ```
 
+The file has no local imports: the deposit email templates are inlined at the top
+of `index.ts`, so it can also be pasted directly into the Supabase Dashboard
+editor. Keep that inline copy in sync with `src/lib/email-templates.ts`.
+
 `--no-verify-jwt` is used because pg_cron calls the function with a shared secret
 rather than a user JWT. The function still rejects unauthenticated calls.
 

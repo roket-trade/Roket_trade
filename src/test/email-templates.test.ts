@@ -6,7 +6,7 @@ import {
   escapeHtml,
   withdrawalEmailHtml,
   withdrawalEmailSubject,
-} from "../../supabase/functions/_shared/email-templates.ts";
+} from "@/lib/email-templates";
 
 describe("email templates", () => {
   it("escapes markup so user supplied text cannot inject HTML", () => {

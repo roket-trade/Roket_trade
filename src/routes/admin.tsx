@@ -10,7 +10,7 @@ import type { TablesUpdate } from "@/integrations/supabase/types";
 import {
   withdrawalEmailHtml,
   withdrawalEmailSubject,
-} from "../../supabase/functions/_shared/email-templates.ts";
+} from "@/lib/email-templates";
 
 export const Route = createFileRoute("/admin")({
   head: () => ({

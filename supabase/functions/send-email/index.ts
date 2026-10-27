@@ -1,7 +1,7 @@
 // Supabase Edge Function — send-email
 //
 // Thin, authenticated relay to the Resend API. Callers supply the fully rendered
-// email (see supabase/functions/_shared/email-templates.ts), so this function
+// email (the app builds it with src/lib/email-templates.ts), so this function
 // owns delivery, validation and access control only.
 //
 //   POST /functions/v1/send-email

@@ -1,9 +1,12 @@
 // Shared, dependency-free email templates.
 //
-// Used by:
-//   - supabase/functions/send-email             (validates + relays HTML to Resend)
-//   - supabase/functions/verify-crypto-deposit  (deposit receipt)
-//   - src/routes/admin.tsx                      (withdrawal decision notice)
+// This is the client-side copy: the admin panel renders withdrawal notices with
+// it and src/test/email-templates.test.ts covers the markup.
+//
+// The Edge Functions are pasted into the Supabase Dashboard editor, which cannot
+// bundle sibling folders, so `verify-crypto-deposit/index.ts` carries its own
+// inline copy of the deposit templates. Keep the two in sync when changing the
+// layout.
 //
 // Inline styles only: mail clients strip <style> blocks, and Resend delivers the
 // HTML verbatim. Everything is a table so Outlook/Gmail render the same box.
