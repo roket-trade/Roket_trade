@@ -75,11 +75,14 @@ function makeSim(when = new Date()): Tx {
   };
 }
 
-export const maskName = (name: string | null): string => {
+export const maskName = (name: string | null | undefined): string => {
   if (!name) return "Roket User";
-  const parts = name.trim().split(" ");
-  if (parts.length > 1) return `${parts[0]} ${parts[1][0]}.`;
-  return parts[0];
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "Roket User";
+  const [first, second] = parts;
+  if (!first) return "Roket User";
+  if (parts.length === 1) return first;
+  return `${first} ${second?.[0] ?? ""}.`;
 };
 
 function makeReal(row: RealRow): Tx | null {
@@ -126,22 +129,16 @@ function Icon({ action }: { action: Action }) {
   );
 }
 
-type SupabaseRpc = (
-  fn: string,
-  args: Record<string, unknown>,
-) => Promise<{ data: unknown; error: unknown }>;
-
 /**
  * Anonymous visitors cannot read `transactions` directly (RLS). The
- * SECURITY DEFINER RPC returns only type/amount/created_at, so the feed stays
+ * SECURITY DEFINER RPC returns type/amount/created_at/user_name, so the feed stays
  * real without exposing identities or wallets. The direct table read remains as
  * a fallback for environments where the RPC has not been deployed yet.
  */
 async function fetchRecentTransactions(): Promise<RealRow[]> {
   try {
-    const rpc = supabase.rpc as unknown as SupabaseRpc;
-    const { data, error } = await rpc("recent_public_transactions", { row_limit: REAL_LIMIT });
-    if (!error && Array.isArray(data)) return data as RealRow[];
+    const { data, error } = await supabase.rpc("recent_public_transactions", { row_limit: REAL_LIMIT });
+    if (!error && Array.isArray(data)) return data as unknown as RealRow[];
   } catch {
     // RPC unavailable — fall through to the table read.
   }

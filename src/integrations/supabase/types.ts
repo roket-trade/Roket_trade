@@ -285,6 +285,16 @@ export type Database = {
         Args: { target_user_id: string }
         Returns: undefined
       }
+      recent_public_transactions: {
+        Args: { row_limit: number }
+        Returns: {
+          id: string
+          type: string
+          amount: number
+          created_at: string
+          user_name: string | null
+        }[]
+      }
       admin_user_emails: {
         Args: { ids?: string[] | null }
         Returns: { id: string; email: string | null }[]
