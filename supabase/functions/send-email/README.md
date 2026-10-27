@@ -20,13 +20,13 @@ supabase/functions/_shared/email-templates.ts   # dark layout + templates
 }
 ```
 
-| Field      | Required | Notes                                                   |
-| ---------- | -------- | ------------------------------------------------------- |
-| `to`       | yes      | One address, or up to 5 in an array                     |
-| `subject`  | yes      | Max 200 characters                                      |
-| `html`     | yes      | Max 200 KB; render it with `_shared/email-templates.ts` |
-| `from`     | no       | Defaults to `EMAIL_FROM`, then `onboarding@resend.dev`  |
-| `reply_to` | no       | Defaults to `EMAIL_REPLY_TO`, then the `from` address   |
+| Field      | Required | Notes                                                               |
+| ---------- | -------- | ------------------------------------------------------------------- |
+| `to`       | yes      | One address, or up to 5 in an array                                 |
+| `subject`  | yes      | Max 200 characters                                                  |
+| `html`     | yes      | Max 200 KB; render it with `_shared/email-templates.ts`             |
+| `from`     | no       | Defaults to `EMAIL_FROM`, then `Roket Support <support@roket.bond>` |
+| `reply_to` | no       | Defaults to `EMAIL_REPLY_TO`, then the `from` address               |
 
 Response: `{ "ok": true, "id": "<resend-message-id>" }` on success, or
 `{ "ok": false, "error": "…" }` with a 4xx/5xx status.
@@ -55,13 +55,16 @@ Optional:
 
 ```bash
 supabase secrets set \
-  EMAIL_FROM="Roket <no-reply@yourdomain.com>" \
-  EMAIL_REPLY_TO=support@yourdomain.com
+  EMAIL_FROM="Roket Support <support@roket.bond>" \
+  EMAIL_REPLY_TO=support@roket.bond
 ```
 
-`onboarding@resend.dev` is Resend's test sender: it only delivers to the address
-that owns the Resend account. Verify a domain in Resend and set `EMAIL_FROM`
-before mailing real users.
+`roket.bond` is a verified sending domain in Resend, so the default sender
+`Roket Support <support@roket.bond>` delivers to real users with no extra
+configuration. Set `EMAIL_FROM` only if you want a different verified address
+(for example `no-reply@roket.bond`); Resend rejects any sender on a domain that
+is not verified in the account. `EMAIL_REPLY_TO` should stay a monitored mailbox
+because user replies land there.
 
 `SUPABASE_URL`, `SUPABASE_ANON_KEY` and `SUPABASE_SERVICE_ROLE_KEY` are injected
 automatically.

@@ -20,8 +20,8 @@
 // Required secrets (supabase secrets set ...):
 //   RESEND_API_KEY   Resend API key with permission to send
 // Optional secrets:
-//   EMAIL_FROM       defaults to onboarding@resend.dev (Resend's test sender,
-//                    which can only deliver to the account owner's address)
+//   EMAIL_FROM       defaults to Roket Support <support@roket.bond>
+//                    (roket.bond is a verified sending domain in Resend)
 //   EMAIL_REPLY_TO   defaults to EMAIL_FROM
 //
 // SUPABASE_URL, SUPABASE_ANON_KEY and SUPABASE_SERVICE_ROLE_KEY are injected by
@@ -31,7 +31,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 
 const RESEND_ENDPOINT = "https://api.resend.com/emails";
-const DEFAULT_FROM = "onboarding@resend.dev";
+const DEFAULT_FROM = "Roket Support <support@roket.bond>";
 const MAX_RECIPIENTS = 5;
 const MAX_SUBJECT_LENGTH = 200;
 const MAX_HTML_BYTES = 200_000;
@@ -53,7 +53,7 @@ type SendEmailRequest = {
   to?: string | string[];
   subject?: string;
   html?: string;
-  /** Optional override; falls back to EMAIL_FROM / onboarding@resend.dev. */
+  /** Optional override; falls back to EMAIL_FROM / support@roket.bond. */
   from?: string;
   reply_to?: string;
 };
