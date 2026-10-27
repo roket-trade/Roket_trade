@@ -19,7 +19,6 @@ type RealRow = {
   type: string | null;
   amount: number | null;
   created_at: string | null;
-  user_name: string | null;
 };
 
 const MAX_ROWS = 5;
@@ -75,16 +74,6 @@ function makeSim(when = new Date()): Tx {
   };
 }
 
-export const maskName = (name: string | null | undefined): string => {
-  if (!name) return "Roket User";
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return "Roket User";
-  const [first, second] = parts;
-  if (!first) return "Roket User";
-  if (parts.length === 1) return first;
-  return `${first} ${second?.[0] ?? ""}.`;
-};
-
 function makeReal(row: RealRow): Tx | null {
   const action: Action | null =
     row.type === "deposit" ? "Deposit" : row.type === "withdrawal" ? "Withdrawal" : null;
@@ -96,8 +85,8 @@ function makeReal(row: RealRow): Tx | null {
   const when = row.created_at ? new Date(row.created_at) : new Date();
   const time = Number.isNaN(when.getTime()) ? clock(new Date()) : clock(when);
 
-  // Customer identities stay private on the public landing page; show a masked name.
-  return { key: `real-${row.id}`, name: maskName(row.user_name), action, amount, time, real: true };
+  // Real identities are never exposed on the public landing page.
+  return { key: `real-${row.id}`, name: "Hidden User", action, amount, time, real: true };
 }
 
 function Icon({ action }: { action: Action }) {
