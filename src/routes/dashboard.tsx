@@ -20,6 +20,7 @@ import { toast } from "sonner";
 import { AdsterraBanner } from "@/components/AdsterraBanner";
 import { HilltopVideoAd } from "@/components/HilltopVideoAd";
 import { KycModal } from "@/components/KycModal";
+import { NotificationBanner } from "@/components/NotificationBanner";
 import { SupportModal } from "@/components/SupportModal";
 import { AccountSuspendedOverlay } from "@/components/AccountSuspendedOverlay";
 import { HeaderAuthNav } from "@/components/HeaderAuthNav";
@@ -1734,6 +1735,9 @@ function DashboardContent() {
               </p>
               <h1 className="mt-2 font-display text-4xl font-bold">Welcome back, {fullName}</h1>
             </section>
+
+            {/* Only renders while push permission is still undecided. */}
+            <NotificationBanner />
 
             <div className="mt-8 grid gap-4 md:grid-cols-3">
               <section className="rounded-2xl border border-gray-800 bg-gray-900/50 p-5 backdrop-blur">

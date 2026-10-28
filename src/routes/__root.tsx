@@ -14,6 +14,7 @@ import { Toaster } from "sonner";
 import appCss from "../styles.css?url";
 import { reportLovableError } from "../lib/lovable-error-reporting";
 import { AuthProvider } from "@/components/AuthProvider";
+import { OneSignalProvider } from "@/components/OneSignalProvider";
 import { PaymentVerificationProvider } from "@/components/PaymentVerificationProvider";
 import { ServiceWorkerRegistrar } from "@/components/ServiceWorkerRegistrar";
 
@@ -154,12 +155,15 @@ function RootComponent() {
   return (
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
-        <PaymentVerificationProvider>
-          {/* Required: nested routes render here. Removing <Outlet /> breaks all child routes. */}
-          <Outlet />
-          <ServiceWorkerRegistrar />
-          <Toaster theme="dark" richColors position="top-center" />
-        </PaymentVerificationProvider>
+        {/* Browser-only: boots the OneSignal SDK once the app is hydrated. */}
+        <OneSignalProvider>
+          <PaymentVerificationProvider>
+            {/* Required: nested routes render here. Removing <Outlet /> breaks all child routes. */}
+            <Outlet />
+            <ServiceWorkerRegistrar />
+            <Toaster theme="dark" richColors position="top-center" />
+          </PaymentVerificationProvider>
+        </OneSignalProvider>
       </AuthProvider>
     </QueryClientProvider>
   );

@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import type { Session, User } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
+import { syncOneSignalUser } from "@/lib/onesignal";
 
 type AuthContextValue = {
   session: Session | null;
@@ -45,6 +46,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     () => ({ session, user: session?.user ?? null, loading }),
     [session, loading],
   );
+
+  // Mirror the Supabase identity into OneSignal so pushes can be addressed to
+  // this account (login on sign-in, logout on sign-out). Waits for the initial
+  // session read so a returning visitor isn't briefly treated as signed out.
+  const userId = session?.user?.id ?? null;
+  useEffect(() => {
+    if (loading) return;
+    void syncOneSignalUser(userId);
+  }, [loading, userId]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
