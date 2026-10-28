@@ -46,6 +46,15 @@ const { WALLET, state } = vi.hoisted(() => {
       inserts: [] as Array<Record<string, unknown>>,
       /** Forces the `profiles` cooldown write to fail. */
       profileUpdateError: null as null | { message: string; code?: string },
+      /** Forces the pending-withdrawal SELECT to fail (RLS/network). */
+      pendingReadError: null as null | {
+        message: string;
+        code?: string;
+        details?: string | null;
+        hint?: string | null;
+      },
+      /** Simulates RLS returning an empty result for the new pending row. */
+      hidePendingFromReads: false,
       /** When set, pending-withdrawal reads wait for `open()` before resolving. */
       pendingReadGate: null as null | { promise: Promise<void>; open: () => void },
     },
@@ -158,7 +167,16 @@ vi.mock("@/integrations/supabase/client", () => {
         }
 
         const result = { data: rowsFor(), error: null };
-        if (table === "transactions" && filters["status"] === "pending" && state.pendingReadGate) {
+        const isPendingWithdrawalRead = table === "transactions" && filters["status"] === "pending";
+
+        if (isPendingWithdrawalRead && state.pendingReadError) {
+          return Promise.resolve({ data: null, error: state.pendingReadError }).then(resolve);
+        }
+        if (isPendingWithdrawalRead && state.hidePendingFromReads) {
+          // RLS-style filtering: the query succeeds but the row is invisible.
+          return Promise.resolve({ data: [], error: null }).then(resolve);
+        }
+        if (isPendingWithdrawalRead && state.pendingReadGate) {
           // Simulate a slow read so the test can prove the UI already dropped
           // the balance before the refetch returns.
           return state.pendingReadGate.promise.then(() => result).then(resolve);
@@ -210,6 +228,8 @@ beforeEach(() => {
   state.completedWithdrawals = [];
   state.inserts = [];
   state.profileUpdateError = null;
+  state.pendingReadError = null;
+  state.hidePendingFromReads = false;
   state.pendingReadGate = null;
   state.profile.last_withdraw_at = null;
   state.profile.default_wallet_address = WALLET;
@@ -297,5 +317,46 @@ describe("Dashboard withdrawal balance", () => {
 
     expect(state.inserts).toHaveLength(1);
     await waitFor(() => expect(within(card).getByText("$70.00")).toBeInTheDocument());
+  });
+
+  it("keeps the balance down when RLS hides the new pending row", async () => {
+    // The production symptom: the SELECT succeeds but filters the row out, so
+    // the server-reported pending total is 0. The balance must not spring back.
+    state.hidePendingFromReads = true;
+
+    render(<DashboardPage />);
+    const card = await findWithdrawCard();
+    expect(await within(card).findByText("$120.00")).toBeInTheDocument();
+
+    await submitWithdrawal(card, 50);
+
+    await waitFor(() => expect(within(card).getByText("$70.00")).toBeInTheDocument());
+    // Give the refetch time to land, then re-check: it must not restore $120.00.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(within(card).getByText("$70.00")).toBeInTheDocument();
+    expect(within(card).queryByText("$120.00")).toBeNull();
+  });
+
+  it("keeps the balance down and logs loudly when the pending read errors", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    state.pendingReadError = {
+      message: "permission denied for table transactions",
+      code: "42501",
+    };
+
+    render(<DashboardPage />);
+    const card = await findWithdrawCard();
+    expect(await within(card).findByText("$120.00")).toBeInTheDocument();
+
+    await submitWithdrawal(card, 50);
+
+    await waitFor(() => expect(within(card).getByText("$70.00")).toBeInTheDocument());
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(within(card).getByText("$70.00")).toBeInTheDocument();
+    expect(
+      consoleError.mock.calls.some(([first]) =>
+        String(first).includes("pending withdrawals fetch failed"),
+      ),
+    ).toBe(true);
   });
 });

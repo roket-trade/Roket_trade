@@ -900,6 +900,17 @@ function DashboardContent() {
   const [recentWithdrawals, setRecentWithdrawals] = useState<RecentWithdrawal[]>([]);
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
   const [summary, setSummary] = useState<DashboardSummary>(EMPTY_SUMMARY);
+  // Mirrors `summary` so the fetcher can read the previous pending total without
+  // taking it as a dependency (which would re-create fetchProfile on every set).
+  const summaryRef = useRef<DashboardSummary>(EMPTY_SUMMARY);
+  // Pending withdrawals this tab submitted that the latest read may not have
+  // returned yet (RLS hiding the row, replication lag, a failed SELECT). Floors
+  // the pending total so the available balance can never spring back to its
+  // pre-withdrawal value.
+  const localPendingFloor = useRef(0);
+  useEffect(() => {
+    summaryRef.current = summary;
+  }, [summary]);
   const [platformStats, setPlatformStats] = useState<PlatformStats>(EMPTY_PLATFORM_STATS);
   const [withdrawalOpen, setWithdrawalOpen] = useState(false);
   const [withdrawalBusy, setWithdrawalBusy] = useState(false);
@@ -1116,9 +1127,43 @@ function DashboardContent() {
         | undefined;
 
       const totalDeposited = round2(sumDeposits(depositRows.data));
+
+      // A failed pending-withdrawal read must never masquerade as "no pending
+      // withdrawals" — that silently hands the whole balance back, which is the
+      // reported symptom when RLS hides the row. Only a successful SELECT is
+      // allowed to move the figure, and a locally submitted request floors it.
+      const pendingError = pendingWithdrawalRows.error;
+      if (pendingError) {
+        console.error("[dashboard] pending withdrawals fetch failed", {
+          userId: currentUser.id,
+          message: pendingError.message,
+          code: pendingError.code,
+          details: pendingError.details,
+          hint: pendingError.hint,
+        });
+      }
+      const serverPending = pendingError ? null : round2(sumAmounts(pendingWithdrawalRows.data));
+
+      console.log("[dashboard] pending withdrawal rows", {
+        userId: currentUser.id,
+        count: (pendingWithdrawalRows.data ?? []).length,
+        amounts: (pendingWithdrawalRows.data ?? []).map((row) => row.amount),
+        serverPending,
+        localPendingFloor: localPendingFloor.current,
+        error: pendingError?.message ?? null,
+      });
+
       const totalPendingWithdrawals = round2(
-        sumAmounts(pendingWithdrawalRows.data),
+        Math.max(
+          serverPending ?? summaryRef.current.totalPendingWithdrawals,
+          localPendingFloor.current,
+        ),
       );
+      // The server has caught up with everything this tab submitted, so the
+      // local floor is no longer needed.
+      if (serverPending != null && serverPending >= localPendingFloor.current) {
+        localPendingFloor.current = 0;
+      }
 
       const dailyProfitTotal = round2(
         Math.max(
@@ -1159,6 +1204,21 @@ function DashboardContent() {
         ...member,
         bonus: bonusByReferredUser.get(member.id) ?? 0,
       }));
+
+      // Requested diagnostic: the exact numbers behind the Available Balance.
+      // Right before setSummary so the console shows what is about to be stored.
+      const debugTotalBalance = round2(
+        Number(data?.main_balance ?? 0) + Number(data?.extra_balance ?? 0),
+      );
+      console.log("DEBUG BALANCE:", {
+        totalBalance: debugTotalBalance,
+        totalDeposited,
+        pending: totalPendingWithdrawals,
+        available: Math.max(
+          0,
+          round2(debugTotalBalance - totalDeposited - totalPendingWithdrawals),
+        ),
+      });
 
       setSummary({
         adReward: round2(sumAmounts(adRows.data)),
@@ -1533,21 +1593,30 @@ function DashboardContent() {
 
       // The request is pending, so it must stop counting toward the balance
       // right away — waiting for a reload is what made the Available Balance
-      // look frozen. Move the pending total now, then reconcile with the
-      // database below (authoritative figure + the new row in the list).
+      // look frozen. Record the local floor first so a read that cannot see the
+      // row (RLS) or a failed read cannot undo this.
+      const optimisticPending = round2(summaryRef.current.totalPendingWithdrawals + amount);
+      localPendingFloor.current = round2(localPendingFloor.current + amount);
       setSummary((current) => ({
         ...current,
         totalPendingWithdrawals: round2(current.totalPendingWithdrawals + amount),
       }));
+
+      console.log("DEBUG WITHDRAWAL SUBMITTED:", {
+        userId: user.id,
+        amount,
+        pending: optimisticPending,
+        floor: localPendingFloor.current,
+      });
 
       setWithdrawalOpen(false);
       setWithdrawAmount("");
       setSelectedWallet(null);
       setWithdrawalSuccess(true);
 
-      // Pull the server truth for every dashboard aggregate: the pending total,
-      // the Latest 5 Withdrawals list and the plan cards all move together.
-      void fetchProfile();
+      // The insert above has resolved (fully committed), so read the server
+      // truth back for every dashboard aggregate — including the pending total.
+      await fetchProfile();
     } catch (err) {
       const code = (err as { code?: string } | null)?.code;
       const message =
