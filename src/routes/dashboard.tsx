@@ -1067,6 +1067,8 @@ function DashboardContent() {
           .eq("user_id", currentUser.id)
           .eq("type", "withdrawal")
           .eq("status", "pending")
+          // No limit: every pending request reduces the available balance, so
+          // the aggregate below must see all of them, not just the newest page.
           .order("created_at", { ascending: false }),
         supabase
           .from("transactions")
@@ -1511,26 +1513,55 @@ function DashboardContent() {
       });
       if (txError) throw txError;
 
+      // The withdrawal row exists now. Stamp the 7-day cooldown, but never treat
+      // a failed stamp as a failed withdrawal — the request is already recorded,
+      // so bailing out here would leave the balance looking untouched.
       const { error: profileError } = await supabase
         .from("profiles")
         .update({ last_withdraw_at: nowIso })
         .eq("id", user.id);
-      if (profileError) throw profileError;
+      if (profileError) {
+        console.warn("[dashboard] last_withdraw_at update failed", {
+          message: profileError.message,
+          code: profileError.code,
+        });
+      }
 
       setProfile((current) =>
         current ? { ...current, last_withdraw_at: nowIso } : current,
       );
+
+      // The request is pending, so it must stop counting toward the balance
+      // right away — waiting for a reload is what made the Available Balance
+      // look frozen. Move the pending total now, then reconcile with the
+      // database below (authoritative figure + the new row in the list).
+      setSummary((current) => ({
+        ...current,
+        totalPendingWithdrawals: round2(current.totalPendingWithdrawals + amount),
+      }));
+
       setWithdrawalOpen(false);
       setWithdrawAmount("");
       setSelectedWallet(null);
       setWithdrawalSuccess(true);
+
+      // Pull the server truth for every dashboard aggregate: the pending total,
+      // the Latest 5 Withdrawals list and the plan cards all move together.
+      void fetchProfile();
     } catch (err) {
-      if (err instanceof Error && err.message?.includes('23505')) {
+      const code = (err as { code?: string } | null)?.code;
+      const message =
+        err instanceof Error
+          ? err.message
+          : String((err as { message?: string } | null)?.message ?? "");
+      if (code === "23505" || message.includes("23505")) {
         toast.error("You already have a pending withdrawal request.");
       } else {
-        const message = err instanceof Error ? err.message : "Couldn't submit withdrawal.";
-        toast.error(message);
+        toast.error(message || "Couldn't submit withdrawal.");
       }
+      // Whatever went wrong, the server may already hold a pending request —
+      // resync so the available balance never overstates what is withdrawable.
+      void fetchProfile();
     } finally {
       setWithdrawalBusy(false);
       setIsSubmitting(false);

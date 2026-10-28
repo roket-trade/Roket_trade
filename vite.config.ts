@@ -7,6 +7,7 @@
 import { defineConfig } from "@lovable.dev/vite-tanstack-config";
 import { VitePWA } from "vite-plugin-pwa";
 import type { Plugin, PluginOption } from "vite";
+import { PWA_CACHE_ID } from "./src/lib/pwa-cache";
 
 /**
  * TanStack Start builds three Vite environments: `client`, `ssr` and `nitro`.
@@ -81,6 +82,12 @@ export default defineConfig({
         },
         workbox: {
           globPatterns: ["**/*.{js,css,html,png,svg,ico,woff,woff2}"],
+          // Versioned cache namespace. Every cache this build creates is named
+          // `roket-<PWA_CACHE_VERSION>-...`, and the registrar deletes anything
+          // that does not carry the current id (src/lib/pwa-cache.ts). Bumping
+          // PWA_CACHE_VERSION therefore forces installed clients to drop the
+          // previous build instead of serving it from cache forever.
+          cacheId: PWA_CACHE_ID,
           // Pages are server-rendered: there is no static index.html to use as a
           // navigation fallback, and precaching a missing file would break the
           // install. Navigations are cached at runtime instead, so an offline

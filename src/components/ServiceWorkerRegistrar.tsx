@@ -1,5 +1,7 @@
 import { useEffect } from "react";
 
+import { PWA_CACHE_ID, pruneStalePwaCaches } from "@/lib/pwa-cache";
+
 const SERVICE_WORKER_URL = "/sw.js";
 
 /**
@@ -14,9 +16,19 @@ const SERVICE_WORKER_URL = "/sw.js";
  * and `clientsClaim()` (see `workbox` in vite.config.ts): a freshly deployed
  * worker takes over immediately, which fires `controllerchange` — we reload
  * once so open tabs actually run the new build.
+ *
+ * Stale caches are the other half of an update: a worker (or a cache left by an
+ * older build) can keep serving a bundle from before a deploy, which is how a
+ * removed notification can still toast on a user's device. Every cache that is
+ * not part of the current `PWA_CACHE_ID` is deleted here — on mount and again as
+ * soon as a new worker takes control — so a deploy always wins.
  */
 export function ServiceWorkerRegistrar() {
   useEffect(() => {
+    // Clear caches left behind by earlier builds even if this page never gets a
+    // controller (private mode, registration blocked, first ever visit).
+    void pruneStalePwaCaches();
+
     // The worker only exists in production builds.
     if (import.meta.env.DEV) return;
     if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) return;
@@ -30,18 +42,28 @@ export function ServiceWorkerRegistrar() {
     const handleControllerChange = () => {
       if (!hasExistingController || reloading) return;
       reloading = true;
-      window.location.reload();
+      // Drop the caches the previous worker owned before the reload, so the tab
+      // comes back on the current build instead of a cached one.
+      void pruneStalePwaCaches().finally(() => window.location.reload());
     };
 
     container.addEventListener("controllerchange", handleControllerChange);
 
     const register = () => {
       container
-        .register(SERVICE_WORKER_URL, { scope: "/" })
-        .then((registration) => registration.update())
+        // `updateViaCache: 'none'` bypasses the HTTP cache for sw.js itself, so
+        // the browser always compares the deployed worker instead of trusting a
+        // cached copy (browsers may otherwise reuse it for up to 24h).
+        .register(SERVICE_WORKER_URL, { scope: "/", updateViaCache: "none" })
+        .then(async (registration) => {
+          await registration.update();
+          // The active worker is either current (nothing to do) or replaced by
+          // a newer registration, in which case controllerchange prunes for us.
+          await pruneStalePwaCaches();
+        })
         .catch((error: unknown) => {
           // Never let a registration failure break the app shell.
-          console.error("[PWA] service worker registration failed", error);
+          console.error(`[PWA] service worker registration failed (${PWA_CACHE_ID})`, error);
         });
     };
 
