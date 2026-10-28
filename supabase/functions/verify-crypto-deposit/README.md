@@ -82,6 +82,16 @@ The bonus never affects the deposit: missing referrer profiles, self-referrals,
 legacy short-code `referred_by` values and a missing RPC are logged and reported
 in `referral`, while the deposit still stays `completed`.
 
+## Push notification
+
+Once a deposit is committed as `completed`, the function calls `send-push` with
+the service role key so the depositor's browsers get a push
+(`{"title":"Deposit Confirmed","message":"Your deposit of $60.00 has been confirmed."}`).
+The push is best-effort: a failure is logged and the deposit still returns
+`completed`, because the money has already landed and retrying verification
+would be pointless. Deploy `send-push` and set `ONESIGNAL_REST_API_KEY` for this
+to work — see `supabase/functions/send-push/README.md`.
+
 ## Deploy
 
 ```bash

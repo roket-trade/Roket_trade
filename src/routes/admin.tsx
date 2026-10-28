@@ -128,6 +128,31 @@ const asNumber = (value: unknown, fallback = 0) => {
   return Number.isFinite(n) ? n : fallback;
 };
 
+/**
+ * Best-effort push so a user learns about their withdrawal decision right away.
+ * The money has already moved by the time this runs, so a push failure is only
+ * logged — it must never surface as an error or make the decision look failed.
+ */
+function sendWithdrawalPush(
+  userId: string | null,
+  status: "approved" | "rejected",
+  amount: number,
+): void {
+  if (!userId) return;
+  void supabase.functions
+    .invoke("send-push", {
+      body: {
+        external_user_id: userId,
+        title: "Withdrawal Update",
+        message: `Your withdrawal of $${amount.toFixed(2)} has been ${status}.`,
+      },
+    })
+    .then(({ error }) => {
+      if (error) console.warn("[admin] withdrawal push failed:", error.message);
+    })
+    .catch((err: unknown) => console.warn("[admin] withdrawal push failed:", err));
+}
+
 // Human labels for the transaction types stored in `transactions.type`.
 const TX_TYPE_LABELS: Record<string, string> = {
   deposit: "Deposit",
@@ -749,6 +774,7 @@ function AdminContent() {
       const { error } = await supabase.from("transactions").update({ status: "completed" }).eq("id", tx.id);
       if (error) throw error;
       setWithdrawals((w) => w.filter((t) => t.id !== tx.id));
+      sendWithdrawalPush(tx.user_id, "approved", Math.abs(Number(tx.amount)));
       toast.success("Withdrawal completed.");
       void refreshAggregates();
     } catch (err) {
@@ -778,6 +804,7 @@ function AdminContent() {
       const { error: tErr } = await supabase.from("transactions").update({ status: "rejected" }).eq("id", tx.id);
       if (tErr) throw tErr;
       setWithdrawals((w) => w.filter((t) => t.id !== tx.id));
+      sendWithdrawalPush(tx.user_id, "rejected", refund);
       toast.success(`Rejected. ${money(refund)} refunded.`);
       void refreshAggregates();
     } catch (err) {

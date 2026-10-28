@@ -432,6 +432,54 @@ async function awardReferralBonus(
   }
 }
 
+/**
+ * Notify the depositor through the send-push function once their deposit is
+ * confirmed. Best-effort by design: the deposit is already committed at this
+ * point, so a push failure is logged and swallowed rather than failing the
+ * verification (which the cron poller would retry pointlessly).
+ */
+export async function notifyDepositConfirmed(userId: string, amountUsd: number): Promise<boolean> {
+  const supabaseUrl = Deno.env.get("SUPABASE_URL");
+  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  if (!supabaseUrl || !serviceKey) {
+    console.warn("[verify-crypto-deposit] cannot send push: Supabase env is missing");
+    return false;
+  }
+
+  try {
+    const response = await fetch(`${supabaseUrl}/functions/v1/send-push`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        // The service role key marks this as a trusted internal caller.
+        Authorization: `Bearer ${serviceKey}`,
+      },
+      body: JSON.stringify({
+        external_user_id: userId,
+        title: "Deposit Confirmed",
+        message: `Your deposit of $${amountUsd.toFixed(2)} has been confirmed.`,
+      }),
+    });
+
+    if (!response.ok) {
+      const detail = await response.text().catch(() => "");
+      console.warn("[verify-crypto-deposit] deposit push failed", {
+        status: response.status,
+        detail: detail.slice(0, 300),
+      });
+      return false;
+    }
+
+    return true;
+  } catch (error) {
+    console.warn("[verify-crypto-deposit] deposit push threw", {
+      message: error instanceof Error ? error.message : String(error),
+    });
+    return false;
+  }
+}
+
+
 async function handle(request: Request): Promise<Response> {
   if (request.method !== "POST") {
     return json({ ok: false, error: "Method not allowed" }, 405);
@@ -628,6 +676,10 @@ async function handle(request: Request): Promise<Response> {
   // It does not depend on plan activation, so a profile problem below cannot
   // skip it, and a referral problem cannot undo the verified deposit.
   const referral = await awardReferralBonus(admin, row.id);
+
+  // Tell the depositor their money landed. Runs after the commit so the push can
+  // never contradict the stored status, and never decides the outcome.
+  if (row.user_id) await notifyDepositConfirmed(row.user_id, expectedUsd);
 
   if (row.user_id) {
     const planName = normalizePlanName(row.plan_name, body.plan_id);
