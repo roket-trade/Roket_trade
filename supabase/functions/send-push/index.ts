@@ -39,9 +39,28 @@ const MAX_MESSAGE_LENGTH = 600;
 
 type SendPushRequest = {
   external_user_id?: string;
+  /** A single OneSignal subscription ("player") id. */
+  subscription_id?: string;
+  /** Every device to notify; preferred over the external id. */
+  subscription_ids?: string[];
   title?: string;
   message?: string;
 };
+
+/** OneSignal accepts a bounded include list; de-duplicate and cap it. */
+function normalizeSubscriptionIds(body: SendPushRequest): string[] {
+  const raw = [
+    ...(Array.isArray(body.subscription_ids) ? body.subscription_ids : []),
+    ...(body.subscription_id ? [body.subscription_id] : []),
+  ];
+  const unique = new Set<string>();
+  for (const value of raw) {
+    const id = String(value ?? "").trim();
+    if (id) unique.add(id);
+    if (unique.size >= 20) break;
+  }
+  return [...unique];
+}
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -140,21 +159,66 @@ async function handle(request: Request): Promise<Response> {
     .trim()
     .slice(0, MAX_MESSAGE_LENGTH);
 
-  if (!externalUserId) return json({ ok: false, error: "external_user_id is required" }, 400);
+  let subscriptionIds = normalizeSubscriptionIds(body);
+
+  if (!externalUserId && subscriptionIds.length === 0) {
+    return json(
+      { ok: false, error: "subscription_id, subscription_ids or external_user_id is required" },
+      400,
+    );
+  }
   if (!title) return json({ ok: false, error: "title is required" }, 400);
   if (!message) return json({ ok: false, error: "message is required" }, 400);
 
+  // Given only a user id, resolve that user's devices from the table the
+  // browser writes to. Targeting a subscription does not depend on
+  // OneSignal.login() having attached the alias — which is the failure that
+  // answers `recipients: 0`.
+  if (subscriptionIds.length === 0 && externalUserId) {
+    const admin = createClient(supabaseUrl, serviceKey, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
+    const { data, error } = await admin
+      .from("push_subscriptions")
+      .select("subscription_id")
+      .eq("user_id", externalUserId)
+      .order("updated_at", { ascending: false })
+      .limit(20);
+
+    if (error) {
+      // A missing table (migration not run) must fall through to the alias path.
+      console.warn("[send-push] could not read push_subscriptions:", error.message);
+    } else {
+      subscriptionIds = ((data ?? []) as Array<{ subscription_id: string }>)
+        .map((row) => row.subscription_id)
+        .filter(Boolean);
+    }
+
+    console.log("[send-push] resolved devices for user", {
+      externalUserId,
+      subscriptionIds,
+    });
+  }
+
   const appId = Deno.env.get("ONESIGNAL_APP_ID") ?? DEFAULT_ONESIGNAL_APP_ID;
 
-  // include_aliases + target_channel: 'push' addresses exactly this user's
-  // subscribed browsers instead of broadcasting to an audience segment.
+  // Preferred: target the subscription itself. `target_channel` is only required
+  // when targeting by alias, so it is omitted here.
+  // Fallback: the external id alias, for accounts with no saved subscription.
+  const include =
+    subscriptionIds.length > 0
+      ? { include_subscription_ids: subscriptionIds }
+      : { include_aliases: { external_id: [externalUserId] }, target_channel: "push" as const };
+  const target = subscriptionIds.length > 0 ? "subscription_ids" : "external_id";
+
   const payload = {
     app_id: appId,
-    include_aliases: { external_id: [externalUserId] },
-    target_channel: "push",
+    ...include,
     headings: { en: title },
     contents: { en: message },
   };
+
+  console.log("[send-push] sending", { target, subscriptionIds });
 
   let response: Response;
   try {
@@ -199,10 +263,9 @@ async function handle(request: Request): Promise<Response> {
     );
   }
 
-  // A 200 with zero recipients means the user has no push subscription linked
-  // to this external id: the API accepted the call, there was simply nobody to
-  // notify. The `errors` array OneSignal returns in that case says why, so it is
-  // logged and echoed back instead of being swallowed.
+  // A 200 with zero recipients means nothing was targeted: the API accepted the
+  // call, there was simply no matching subscription. The `errors` array
+  // OneSignal returns in that case says why, so it is logged and echoed back.
   const notificationId = typeof result?.id === "string" ? result.id : "";
   const recipients = Number(result?.recipients ?? 0);
   const errors = result?.errors ?? null;
@@ -211,17 +274,21 @@ async function handle(request: Request): Promise<Response> {
     id: notificationId,
     recipients,
     errors,
+    target,
     externalUserId,
+    subscriptionIds,
   });
 
   if (recipients === 0) {
-    console.warn("[send-push] nobody to notify: no push subscription carries this external id", {
+    console.warn("[send-push] nobody to notify: no subscription matched", {
+      target,
       externalUserId,
+      subscriptionIds,
       errors,
     });
   }
 
-  return json({ ok: true, id: notificationId || null, recipients, errors }, 200);
+  return json({ ok: true, id: notificationId || null, recipients, errors, target }, 200);
 }
 
 Deno.serve(handle);

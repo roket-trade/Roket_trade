@@ -1496,6 +1496,17 @@ function DashboardContent() {
     setWithdrawalBusy(true);
     setIsSubmitting(true);
     setConfirmOpen(false);
+
+    // Optimistic: count the request against the balance the moment the user
+    // confirms. `availableWithdrawal` is derived from this figure, so the card
+    // recalculates on the next render instead of staying stale until reload.
+    const optimisticAmount = amount;
+    setSummary((current) => ({
+      ...current,
+      totalPendingWithdrawals: round2(current.totalPendingWithdrawals + optimisticAmount),
+    }));
+
+    let inserted = false;
     try {
       const nowIso = new Date().toISOString();
       const address = selectedWallet.address.trim();
@@ -1511,27 +1522,78 @@ function DashboardContent() {
         created_at: nowIso,
       });
       if (txError) throw txError;
+      inserted = true;
 
-      const { error: profileError } = await supabase
+      // The withdrawal exists now. The 7-day lock timestamp is bookkeeping: if it
+      // fails, warn instead of telling the user the request failed when it did
+      // not — the pending row is already in the table.
+      const { error: lockError } = await supabase
         .from("profiles")
         .update({ last_withdraw_at: nowIso })
         .eq("id", user.id);
-      if (profileError) throw profileError;
+      if (lockError) {
+        console.warn("[withdrawal] could not set last_withdraw_at", lockError);
+      } else {
+        setProfile((current) =>
+          current ? { ...current, last_withdraw_at: nowIso } : current,
+        );
+      }
 
-      setProfile((current) =>
-        current ? { ...current, last_withdraw_at: nowIso } : current,
-      );
       setWithdrawalOpen(false);
       setWithdrawAmount("");
       setSelectedWallet(null);
       setWithdrawalSuccess(true);
+
+      // Replace the optimistic value with the server's truth (this also pulls in
+      // any other pending row the tabs may have missed).
+      await fetchProfile();
+
+      // Diagnostics for "balance did not move" reports: what is pending in the
+      // database right now, and the figure the UI derives from it.
+      const { data: pendingRows, error: pendingError } = await supabase
+        .from("transactions")
+        .select("id,amount,status,type,created_at")
+        .eq("user_id", user.id)
+        .eq("type", "withdrawal")
+        .eq("status", "pending");
+      const pendingTotal = round2(
+        ((pendingRows ?? []) as Array<{ amount: number | string | null }>).reduce(
+          (total, row) => total + Math.abs(Number(row.amount) || 0),
+          0,
+        ),
+      );
+      console.log("[withdrawal] submitted", {
+        amount: optimisticAmount,
+        pendingRows,
+        pendingError,
+        pendingTotal,
+        // What the Available Balance card will show on the next render.
+        expectedAvailable: round2(
+          Math.max(0, totalBalance - summary.totalDeposited - pendingTotal),
+        ),
+      });
     } catch (err) {
-      if (err instanceof Error && err.message?.includes('23505')) {
+      if (!inserted) {
+        // Nothing was written, so undo the optimistic charge.
+        setSummary((current) => ({
+          ...current,
+          totalPendingWithdrawals: round2(
+            Math.max(0, current.totalPendingWithdrawals - optimisticAmount),
+          ),
+        }));
+      } else {
+        // The row landed but something after it failed: re-read the server state
+        // rather than guessing.
+        await fetchProfile().catch(() => undefined);
+      }
+
+      if (err instanceof Error && err.message?.includes("23505")) {
         toast.error("You already have a pending withdrawal request.");
       } else {
         const message = err instanceof Error ? err.message : "Couldn't submit withdrawal.";
         toast.error(message);
       }
+      console.error("[withdrawal] submit failed", { inserted, err });
     } finally {
       setWithdrawalBusy(false);
       setIsSubmitting(false);

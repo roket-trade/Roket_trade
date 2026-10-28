@@ -136,49 +136,67 @@ const asNumber = (value: unknown, fallback = 0) => {
  * The logs are deliberately verbose: a push that silently reaches 0 devices is
  * indistinguishable from one that was never sent, so both the request and the
  * function's reply are printed.
+ *
+ * Targeting: the OneSignal subscription ids are looked up first, because that id
+ * is created by the act of subscribing. The external_id alias only exists once
+ * `OneSignal.login()` has attached it, and when it silently does not, the API
+ * still answers 200 — with `recipients: 0`.
  */
-function sendWithdrawalPush(
+async function sendWithdrawalPush(
   userId: string | null,
   status: "approved" | "rejected",
   amount: number,
-): void {
+): Promise<void> {
   if (!userId) {
     console.warn("[admin] withdrawal push skipped: transaction has no user_id");
     return;
   }
 
-  const body = {
-    external_user_id: userId,
-    title: "Withdrawal Update",
-    message: `Your withdrawal of $${amount.toFixed(2)} has been ${status}.`,
-  };
+  const message = `Your withdrawal of $${amount.toFixed(2)} has been ${status}.`;
+
+  // Every browser this user has subscribed from. RLS lets admins read these.
+  const { data: subscriptionRows, error: subscriptionError } = await supabase
+    .from("push_subscriptions")
+    .select("subscription_id")
+    .eq("user_id", userId)
+    .order("updated_at", { ascending: false })
+    .limit(5);
+
+  if (subscriptionError) {
+    // A missing table (migration not run) must not block the fallback path.
+    console.warn("[admin] could not read push subscriptions:", subscriptionError.message);
+  }
+
+  const subscriptionIds = ((subscriptionRows ?? []) as Array<{ subscription_id: string }>)
+    .map((row) => row.subscription_id)
+    .filter(Boolean);
+
+  const body =
+    subscriptionIds.length > 0
+      ? { subscription_ids: subscriptionIds, title: "Withdrawal Update", message }
+      : { external_user_id: userId, title: "Withdrawal Update", message };
+
   console.log("[admin] invoking send-push", body);
 
-  void supabase.functions
-    .invoke("send-push", { body })
-    .then(({ data, error }) => {
-      if (error) {
-        console.warn("[admin] withdrawal push failed:", error.message, error);
-        return;
-      }
+  try {
+    const { data, error } = await supabase.functions.invoke("send-push", { body });
 
-      const reply = data as { recipients?: number; errors?: unknown } | null;
-      const recipients = Number(reply?.recipients ?? 0);
+    if (error) {
+      console.warn("[admin] withdrawal push failed:", error.message, error);
+      return;
+    }
 
-      if (recipients === 0) {
-        // The API accepted the notification but nobody was targeted: the
-        // external id is not attached to any push subscription, i.e. the phone
-        // never ran OneSignal.login(<user id>) with notifications allowed.
-        console.warn(
-          "[admin] push accepted but reached 0 devices — external id not linked to a subscription",
-          reply,
-        );
-        return;
-      }
+    const reply = data as { recipients?: number; errors?: unknown; target?: string } | null;
 
-      console.log("[admin] withdrawal push delivered", reply);
-    })
-    .catch((err: unknown) => console.warn("[admin] withdrawal push failed:", err));
+    if (Number(reply?.recipients ?? 0) === 0) {
+      console.warn("[admin] push accepted but reached 0 devices — no subscription matched", reply);
+      return;
+    }
+
+    console.log("[admin] withdrawal push delivered", reply);
+  } catch (err) {
+    console.warn("[admin] withdrawal push failed:", err);
+  }
 }
 
 // Human labels for the transaction types stored in `transactions.type`.
@@ -802,7 +820,7 @@ function AdminContent() {
       const { error } = await supabase.from("transactions").update({ status: "completed" }).eq("id", tx.id);
       if (error) throw error;
       setWithdrawals((w) => w.filter((t) => t.id !== tx.id));
-      sendWithdrawalPush(tx.user_id, "approved", Math.abs(Number(tx.amount)));
+      void sendWithdrawalPush(tx.user_id, "approved", Math.abs(Number(tx.amount)));
       toast.success("Withdrawal completed.");
       void refreshAggregates();
     } catch (err) {
@@ -832,7 +850,7 @@ function AdminContent() {
       const { error: tErr } = await supabase.from("transactions").update({ status: "rejected" }).eq("id", tx.id);
       if (tErr) throw tErr;
       setWithdrawals((w) => w.filter((t) => t.id !== tx.id));
-      sendWithdrawalPush(tx.user_id, "rejected", refund);
+      void sendWithdrawalPush(tx.user_id, "rejected", refund);
       toast.success(`Rejected. ${money(refund)} refunded.`);
       void refreshAggregates();
     } catch (err) {

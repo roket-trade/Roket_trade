@@ -1,5 +1,7 @@
 import OneSignal from "react-onesignal";
 
+import { supabase } from "@/integrations/supabase/client";
+
 /**
  * Public OneSignal web-push app id. This is not a secret — it ships inside the
  * browser bundle and identifies the app to the SDK. The REST API key that can
@@ -62,11 +64,94 @@ export function initOneSignal(): Promise<void> {
  */
 let linkedUserId: string | null = null;
 
+/**
+ * The OneSignal subscription ("player") id for THIS browser.
+ *
+ * This is the id the REST API accepts as `include_subscription_ids`, and it is
+ * independent of the external_id alias: the alias only exists once
+ * `OneSignal.login()` has successfully attached it, and when that silently fails
+ * every send answers `recipients: 0`. The subscription id is created by the act
+ * of subscribing, so it is the more reliable targeting key.
+ */
+export function getOneSignalSubscriptionId(): string | null {
+  if (!canUseOneSignal()) return null;
+  try {
+    return OneSignal.User?.PushSubscription?.id ?? null;
+  } catch {
+    return null;
+  }
+}
+
+let subscriptionListenerAttached = false;
+
+/**
+ * Stores this browser's subscription id against the signed-in user so the
+ * server can target it directly (see supabase/migrations/*_push_subscriptions.sql).
+ */
+async function persistPushSubscription(userId: string): Promise<void> {
+  const subscriptionId = getOneSignalSubscriptionId();
+  console.log("[OneSignal] subscription id for this browser:", subscriptionId);
+
+  if (!subscriptionId) {
+    console.warn(
+      "[OneSignal] no subscription id yet — this browser has not granted permission, so nothing can be pushed to it",
+    );
+    return;
+  }
+
+  const { error } = await supabase.from("push_subscriptions").upsert(
+    {
+      user_id: userId,
+      subscription_id: subscriptionId,
+      user_agent: typeof navigator !== "undefined" ? navigator.userAgent.slice(0, 255) : null,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: "subscription_id" },
+  );
+
+  if (error) {
+    const missingTable = error.code === "42P01" || error.code === "PGRST205";
+    console.warn(
+      missingTable
+        ? "[OneSignal] push_subscriptions table is missing — run supabase/migrations/20261107000000_push_subscriptions.sql, then pushes fall back to the external id"
+        : "[OneSignal] could not save the subscription id:",
+      error.message,
+    );
+    return;
+  }
+
+  console.log("[OneSignal] saved subscription id for user", userId, subscriptionId);
+}
+
+/**
+ * The subscription id only appears once permission is granted, which can happen
+ * long after login. Watching for the change is what makes a late "Allow" click
+ * land in the database.
+ */
+function attachSubscriptionListener(): void {
+  if (subscriptionListenerAttached) return;
+  subscriptionListenerAttached = true;
+
+  try {
+    OneSignal.User?.PushSubscription?.addEventListener("change", () => {
+      console.log("[OneSignal] push subscription changed", {
+        subscriptionId: getOneSignalSubscriptionId(),
+        optedIn: OneSignal.User?.PushSubscription?.optedIn ?? null,
+      });
+      if (linkedUserId) void persistPushSubscription(linkedUserId);
+    });
+  } catch (error) {
+    console.warn("[OneSignal] could not watch subscription changes:", error);
+  }
+}
+
 async function linkUser(userId: string): Promise<void> {
   try {
     await initOneSignal();
     await OneSignal.login(userId);
     linkedUserId = userId;
+
+    attachSubscriptionListener();
 
     // `login()` can resolve before the alias is attached, and a subscription
     // without the alias is invisible to include_aliases targeting on the
@@ -85,6 +170,9 @@ async function linkUser(userId: string): Promise<void> {
         { expected: userId, actual: externalId ?? null },
       );
     }
+
+    // Target by subscription id from now on; this is what survives a failed alias.
+    await persistPushSubscription(userId);
   } catch (error) {
     console.warn("[OneSignal] could not link the signed-in user:", error);
   }
@@ -159,7 +247,15 @@ export async function requestPushPermission(): Promise<boolean> {
   await initOneSignal();
 
   try {
-    return await OneSignal.Notifications.requestPermission();
+    const granted = await OneSignal.Notifications.requestPermission();
+    // The subscription id is handed out as soon as permission is granted, so
+    // save it immediately — otherwise the user only appears pushable after a
+    // reload.
+    if (granted) {
+      attachSubscriptionListener();
+      if (linkedUserId) await persistPushSubscription(linkedUserId);
+    }
+    return granted;
   } catch (error) {
     console.warn("[OneSignal] permission request failed:", error);
     return false;

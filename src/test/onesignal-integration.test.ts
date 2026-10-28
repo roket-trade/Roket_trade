@@ -32,8 +32,24 @@ vi.mock("react-onesignal", () => ({
       get externalId() {
         return mockUser.externalId;
       },
-      PushSubscription: { id: "sub-1", token: "token-1", optedIn: true },
+      PushSubscription: {
+        id: "sub-1",
+        token: "token-1",
+        optedIn: true,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+      },
     },
+  },
+}));
+
+const { mockUpsert } = vi.hoisted(() => ({
+  mockUpsert: vi.fn(() => Promise.resolve({ error: null })),
+}));
+
+vi.mock("@/integrations/supabase/client", () => ({
+  supabase: {
+    from: () => ({ upsert: mockUpsert }),
   },
 }));
 
@@ -93,6 +109,20 @@ describe("OneSignal integration", () => {
         expectedExternalId: "user-42",
         externalId: "user-42",
       }),
+    );
+    log.mockRestore();
+  });
+
+  it("saves the subscription id so the server can target the device directly", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const { syncOneSignalUser } = await loadModule();
+
+    await syncOneSignalUser("user-42");
+
+    expect(log).toHaveBeenCalledWith("[OneSignal] subscription id for this browser:", "sub-1");
+    expect(mockUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({ user_id: "user-42", subscription_id: "sub-1" }),
+      { onConflict: "subscription_id" },
     );
     log.mockRestore();
   });
