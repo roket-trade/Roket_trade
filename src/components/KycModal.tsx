@@ -127,7 +127,7 @@ export function KycModal({
       }
 
       // Welcome Bonus: grant $2.00 once when KYC is first verified.
-      if (data.welcome_bonus_claimed === false) {
+      if (data.welcome_bonus_claimed !== true) {
         try {
           const currentExtra = Number(data.extra_balance ?? 0);
           const nextExtra = Math.round((currentExtra + 2) * 100) / 100;

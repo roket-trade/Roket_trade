@@ -1174,8 +1174,12 @@ const openPlanModal = (user: AdminUser) => {
         throw new Error("You can't remove your own admin access.");
       }
 
+      const oldBalance = Number(target.main_balance ?? 0) + Number(target.extra_balance ?? 0);
+      const delta = round2(balance - oldBalance);
+      const nextMain = round2(Number(target.main_balance ?? 0) + delta);
+
       const patch = {
-        main_balance: round2(balance),
+        main_balance: nextMain,
         is_admin: editDraft.isAdmin,
         kyc_status: editDraft.kyc,
       };
@@ -1183,7 +1187,7 @@ const openPlanModal = (user: AdminUser) => {
       await updateProfile(target.id, patch, "edit balance/KYC");
 
       patchUser(target.id, {
-        main_balance: round2(balance),
+        main_balance: nextMain,
         is_admin: editDraft.isAdmin,
         kyc_status: editDraft.kyc,
       });
@@ -1417,7 +1421,7 @@ const openPlanModal = (user: AdminUser) => {
                   <div className="overflow-x-auto"><table className="w-full min-w-[1080px] text-left text-sm">
                     <thead><tr className="border-b border-border/70 text-xs uppercase tracking-widest text-muted-foreground">
                       <th className="px-4 py-3">Email</th><th className="px-4 py-3">Name</th>
-                      <th className="px-4 py-3">Total Earned</th><th className="px-4 py-3">Available Balance</th>
+                      <th className="px-4 py-3">Balance</th>
                       <th className="px-4 py-3">Referrals</th><th className="px-4 py-3">KYC Status</th>
                       <th className="px-4 py-3">Plan Name</th><th className="px-4 py-3">Account Status</th>
                       <th className="px-4 py-3 text-right">Actions</th>
@@ -1432,7 +1436,7 @@ const openPlanModal = (user: AdminUser) => {
                         <tr key={u.id} className="border-b border-border/40 last:border-0">
                           <td className="px-4 py-3 font-medium">{emails[u.id] ?? short(u.id, 10)}</td>
                           <td className="px-4 py-3">{u.full_name || "—"}</td>
-                          <td className="px-4 py-3 font-semibold text-primary" title="Completed daily profit + ad rewards + referral bonuses (deposits excluded)">{agg ? money(agg.totalEarned) : "—"}</td>
+                          <td className="px-4 py-3 font-semibold text-primary">{money(Number(u.main_balance ?? 0) + Number(u.extra_balance ?? 0))}</td>
                           <td className="px-4 py-3" title={agg ? `Earned ${money(agg.totalEarned)} − withdrawn ${money(agg.totalWithdrawn)}` : "Earnings unavailable"}>{agg ? money(agg.availableBalance) : "—"}</td>
                           <td className="px-4 py-3">{agg ? agg.referralCount : "—"}</td>
                           <td className="px-4 py-3">
