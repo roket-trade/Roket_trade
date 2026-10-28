@@ -62,7 +62,7 @@ AS $$
       FROM public.transactions t
       JOIN scope s ON s.id = t.user_id
      WHERE t.status = 'completed'
-       AND t.type IN ('daily_profit', 'ad_earning', 'referral_bonus')
+       AND t.type IN ('daily_profit', 'ad_earning', 'referral_bonus', 'welcome_bonus')
      GROUP BY t.user_id
   ),
   withdrawn AS (

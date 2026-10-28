@@ -111,7 +111,7 @@ const EMPTY_AGGREGATE: UserAggregate = {
   adjustment: 0,
 };
 
-const EARNINGS_TYPES = ["daily_profit", "ad_earning", "referral_bonus"] as const;
+const EARNINGS_TYPES = ["daily_profit", "ad_earning", "referral_bonus", "welcome_bonus"] as const;
 const TX_COLS =
   "id,user_id,type,amount,deposit_amount,plan_name,network,wallet_address,tx_hash,status,created_at";
 
@@ -733,28 +733,23 @@ function AdminContent() {
       if (!Number.isFinite(credit) || credit <= 0) throw new Error("Invalid deposit amount.");
       const { error: txErr } = await supabase.from("transactions").update({ status: "completed" }).eq("id", tx.id);
       if (txErr) throw txErr;
-      const { data: up, error: uErr } = await supabase.from("profiles").select("id,full_name,main_balance,referred_by").eq("id", tx.user_id).maybeSingle();
+      const { data: up, error: uErr } = await supabase.from("profiles").select("id,full_name,referred_by").eq("id", tx.user_id).maybeSingle();
       if (uErr) throw uErr;
       if (!up) throw new Error("User profile not found.");
-      const nextBal = Math.round((Number(up.main_balance ?? 0) + credit) * 100) / 100;
-      // Start (or restart) the 365-day plan window as soon as a deposit is
-      // approved, so the dashboard can render "Day X / 365".
+      // A deposit activates the plan only. It never touches the user's balance;
+      // earnings come from daily profits, ads, referrals and the welcome bonus.
       const planStartedAt = new Date();
       const planExpiresAt = new Date(planStartedAt.getTime() + 365 * 24 * 60 * 60 * 1000);
       const planPatch = {
-        main_balance: nextBal,
         ...(tx.plan_name ? { plan_name: tx.plan_name } : {}),
         plan_started_at: planStartedAt.toISOString(),
         plan_expires_at: planExpiresAt.toISOString(),
       };
       try {
-        await updateProfile(tx.user_id, planPatch, "approve deposit (balance + plan)");
+        await updateProfile(tx.user_id, planPatch, "approve deposit (plan)");
       } catch (err) {
-        // Tolerate databases that have not run the dashboard profile migration
-        // yet: the balance credit must still succeed.
         const message = err instanceof Error ? err.message : "";
         if (!/plan_name|plan_(started|expires)_at/i.test(message)) throw err;
-        await updateProfile(tx.user_id, { main_balance: nextBal }, "approve deposit (balance only)");
       }
       // The deposit is already completed and credited at this point, so the push
       // is best-effort: a failed send is logged and swallowed rather than shown

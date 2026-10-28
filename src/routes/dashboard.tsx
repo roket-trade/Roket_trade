@@ -1888,7 +1888,7 @@ function DashboardContent() {
                   </span>
                 </div>
                 <p className="mt-3 font-display text-3xl font-bold text-white">
-                  {money(Number.isFinite(totalEarned) ? totalEarned : 0)}
+                  {money(Number.isFinite(totalBalance) ? totalBalance : 0)}
                 </p>
                 <p className="mt-1 text-xs text-muted-foreground">
                   Main {money(totalDailyProfit)} · Extra {money(extraEarned)}
