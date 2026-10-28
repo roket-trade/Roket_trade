@@ -551,8 +551,7 @@ function AdminContent() {
   const [planPick, setPlanPick] = useState<string>("none");
   const [editUser, setEditUser] = useState<AdminUser | null>(null);
   const [editDraft, setEditDraft] = useState({
-    earned: "0",
-    available: "0",
+    balance: "0",
     isAdmin: false,
     kyc: "unverified",
   });
@@ -1144,10 +1143,8 @@ const openPlanModal = (user: AdminUser) => {
 
   // --- Edit earnings & KYC ------------------------------------------------
   const openEditModal = (user: AdminUser) => {
-    const agg = aggregates[user.id] ?? EMPTY_AGGREGATE;
     setEditDraft({
-      earned: String(round2(agg.totalEarned)),
-      available: String(round2(agg.availableBalance)),
+      balance: String(round2(Number(user.main_balance ?? 0))),
       isAdmin: user.is_admin === true,
       kyc: user.kyc_status ?? "unverified",
     });
@@ -1160,21 +1157,8 @@ const openPlanModal = (user: AdminUser) => {
     ? (aggregates[editUser.id] ?? EMPTY_AGGREGATE).totalWithdrawn
     : 0;
 
-  const changeEarned = (value: string) => {
-    setEditDraft((draft) => ({
-      ...draft,
-      earned: value,
-      available:
-        value.trim() === "" ? "" : String(round2(Number(value) - editWithdrawn)),
-    }));
-  };
-
-  const changeAvailable = (value: string) => {
-    setEditDraft((draft) => ({
-      ...draft,
-      available: value,
-      earned: value.trim() === "" ? "" : String(round2(Number(value) + editWithdrawn)),
-    }));
+  const changeBalance = (value: string) => {
+    setEditDraft((draft) => ({ ...draft, balance: value }));
   };
 
   const saveEdits = async () => {
@@ -1186,66 +1170,28 @@ const openPlanModal = (user: AdminUser) => {
       if (!agg) {
         throw new Error("Earnings are unavailable for this user right now. Refresh and try again.");
       }
-      const earned = Number(editDraft.earned);
-      const available = Number(editDraft.available);
-      if (!Number.isFinite(earned) || earned < 0) {
-        throw new Error("Total Earned must be a number 0 or greater.");
-      }
-      if (!Number.isFinite(available) || available < 0) {
-        throw new Error("Available Balance must be a number 0 or greater.");
+      const balance = Number(editDraft.balance);
+      if (!Number.isFinite(balance) || balance < 0) {
+        throw new Error("Balance must be a number 0 or greater.");
       }
       const adminId = await assertAdmin();
       if (target.id === adminId && !editDraft.isAdmin) {
         throw new Error("You can't remove your own admin access.");
       }
 
-      // The gap between the requested Total Earned and the aggregated figure
-      // becomes a manual adjustment on the profile. Available Balance moves by
-      // the same delta because withdrawals are unchanged. Deposits are never
-      // part of either number.
-      const delta = round2(earned - agg.totalEarned);
-      const nextAdjustment = round2(agg.adjustment + delta);
-      // The dashboard reads profiles.main_balance, so mirror the delta there or
-      // the manual adjustment would never reach the user.
-      const nextMain = Math.max(0, round2(Number(target.main_balance ?? 0) + delta));
       const patch = {
-        earnings_adjustment: nextAdjustment,
-        main_balance: nextMain,
+        main_balance: round2(balance),
         is_admin: editDraft.isAdmin,
         kyc_status: editDraft.kyc,
       };
 
-      try {
-        await updateProfile(target.id, patch, "edit earnings/KYC");
-      } catch (err) {
-        const message = err instanceof Error ? err.message : "";
-        // A deployment without the aggregate migration cannot store the
-        // adjustment column; the balance/KYC part must still save.
-        if (!/earnings_adjustment/i.test(message)) throw err;
-        await updateProfile(
-          target.id,
-          { main_balance: nextMain, is_admin: editDraft.isAdmin, kyc_status: editDraft.kyc },
-          "edit balance/KYC",
-        );
-        toast.warning(
-          "Balance saved, but Total Earned needs supabase/migrations/20261030000000_admin_user_aggregates.sql to persist.",
-        );
-      }
+      await updateProfile(target.id, patch, "edit balance/KYC");
 
       patchUser(target.id, {
-        main_balance: nextMain,
+        main_balance: round2(balance),
         is_admin: editDraft.isAdmin,
         kyc_status: editDraft.kyc,
       });
-      setAggregates((current) => ({
-        ...current,
-        [target.id]: {
-          ...agg,
-          totalEarned: round2(agg.totalEarned + delta),
-          availableBalance: round2(agg.availableBalance + delta),
-          adjustment: nextAdjustment,
-        },
-      }));
       setEditUser(null);
       toast.success(`Saved changes for ${label(target)}.`);
     } catch (err) {
@@ -1735,23 +1681,14 @@ const openPlanModal = (user: AdminUser) => {
               <h2 id="edit-modal-title" className="font-display text-xl font-bold">Edit earnings &amp; KYC</h2>
               <p className="mt-1 text-sm text-muted-foreground">{label(editUser)}</p>
               <p className="mt-3 rounded-lg bg-muted/60 px-3 py-2 text-xs text-muted-foreground">
-                Total Earned comes from completed daily profit, ad rewards and referral bonuses. Available Balance is
-                Total Earned minus withdrawals (completed + pending). Deposits are never included; editing either field
-                stores a manual adjustment.
+                Balance directly edits the user's main balance.
               </p>
-              <div className="mt-4 grid gap-4 sm:grid-cols-2">
+              <div className="mt-4 grid gap-4 sm:grid-cols-1">
                 <div className="space-y-1.5">
-                  <label htmlFor="edit-earned" className="text-sm font-medium">Total Earned</label>
-                  <input id="edit-earned" type="number" min="0" step="0.01" value={editDraft.earned} onChange={(e) => changeEarned(e.target.value)} className="w-full rounded-lg border border-border bg-muted/70 px-4 py-3 text-sm text-foreground outline-none transition-colors focus:border-primary focus:ring-2 focus:ring-primary/20" />
-                </div>
-                <div className="space-y-1.5">
-                  <label htmlFor="edit-available" className="text-sm font-medium">Available Balance</label>
-                  <input id="edit-available" type="number" min="0" step="0.01" value={editDraft.available} onChange={(e) => changeAvailable(e.target.value)} className="w-full rounded-lg border border-border bg-muted/70 px-4 py-3 text-sm text-foreground outline-none transition-colors focus:border-primary focus:ring-2 focus:ring-primary/20" />
+                  <label htmlFor="edit-balance" className="text-sm font-medium">Balance</label>
+                  <input id="edit-balance" type="number" min="0" step="0.01" value={editDraft.balance} onChange={(e) => changeBalance(e.target.value)} className="w-full rounded-lg border border-border bg-muted/70 px-4 py-3 text-sm text-foreground outline-none transition-colors focus:border-primary focus:ring-2 focus:ring-primary/20" />
                 </div>
               </div>
-              <p className="mt-2 text-xs text-muted-foreground">
-                Withdrawn so far: {money(editWithdrawn)}.
-              </p>
               <div className="mt-4 space-y-1.5">
                 <label htmlFor="edit-kyc" className="text-sm font-medium">KYC status</label>
                 <select id="edit-kyc" value={editDraft.kyc} onChange={(e) => setEditDraft((d) => ({ ...d, kyc: e.target.value }))} className="w-full rounded-lg border border-border bg-muted/70 px-4 py-3 text-sm text-foreground outline-none transition-colors focus:border-primary focus:ring-2 focus:ring-primary/20">

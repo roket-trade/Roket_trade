@@ -1471,10 +1471,7 @@ function DashboardContent() {
   // total amount they have deposited and minus any pending withdrawal requests.
   // This drops the available balance immediately when a request is made,
   // preventing multiple pending requests that exceed the actual balance.
-  const availableWithdrawal = Math.max(
-    0,
-    totalBalance - summary.totalDeposited - summary.totalPendingWithdrawals,
-  );
+  const availableWithdrawal = totalBalance;
 
   // Total Balance card shows money EARNED only — never deposits. Main is the
   // sum of daily_profit transactions; Extra is ads + referral bonuses.
@@ -1580,14 +1577,11 @@ function DashboardContent() {
     // Optimistic: count the request against the balance the moment the user
     // confirms. `availableWithdrawal` is derived from this figure, so the card
     // recalculates on the next render instead of staying stale until reload.
-    const optimisticAmount = amount;
-    setSummary((current) => ({
-      ...current,
-      totalPendingWithdrawals: round2(current.totalPendingWithdrawals + optimisticAmount),
-    }));
-    // Keep the diagnostic mirror in step, so a failing read right after this
-    // submit can fall back to the amount the user just committed.
-    lastPendingWithdrawals.current = round2(lastPendingWithdrawals.current + optimisticAmount);
+    setProfile((current) =>
+      current
+        ? { ...current, main_balance: round2(Number(current.main_balance ?? 0) - amount) }
+        : current,
+    );
 
     let inserted = false;
     try {
@@ -1657,15 +1651,11 @@ function DashboardContent() {
       });
     } catch (err) {
       if (!inserted) {
-        // Nothing was written, so undo the optimistic charge.
-        setSummary((current) => ({
-          ...current,
-          totalPendingWithdrawals: round2(
-            Math.max(0, current.totalPendingWithdrawals - optimisticAmount),
-          ),
-        }));
-        lastPendingWithdrawals.current = round2(
-          Math.max(0, lastPendingWithdrawals.current - optimisticAmount),
+        // Undo the optimistic deduction.
+        setProfile((current) =>
+          current
+            ? { ...current, main_balance: round2(Number(current.main_balance ?? 0) + amount) }
+            : current,
         );
       } else {
         // The row landed but something after it failed: re-read the server state
