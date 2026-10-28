@@ -948,6 +948,8 @@ function DashboardContent() {
       } = await supabase.auth.getUser();
       if (id !== requestId.current) return;
 
+      console.log("DEBUG USER ID:", currentUser?.id);
+
       if (userError) console.error("[dashboard] auth.getUser failed", userError);
       setUser(currentUser);
 
@@ -1129,6 +1131,11 @@ function DashboardContent() {
         amount: number | string | null;
       }>;
 
+      console.log("DEBUG PENDING RAW DATA:", pendingWithdrawalsData);
+
+      const pendingError = pendingWithdrawalRows.error;
+      if (pendingError) console.error("DEBUG PENDING ERROR:", pendingError);
+
       console.log("PENDING WITHDRAWALS FROM DB:", pendingWithdrawalsData);
 
       if (pendingWithdrawalRows.error) {
@@ -1213,6 +1220,22 @@ function DashboardContent() {
         ...member,
         bonus: bonusByReferredUser.get(member.id) ?? 0,
       }));
+
+      // Debug-only mirror of what the render pass derives from this summary, so
+      // the balance math is visible in the console the moment it is committed.
+      const debugTotalBalance =
+        Number(data.main_balance ?? 0) + Number(data.extra_balance ?? 0);
+      const debugAvailableWithdrawal = Math.max(
+        0,
+        debugTotalBalance - totalDeposited - effectivePendingWithdrawals,
+      );
+
+      console.log("DEBUG MATH:", {
+        totalBalance: debugTotalBalance,
+        totalDeposited,
+        totalPendingWithdrawals: effectivePendingWithdrawals,
+        availableWithdrawal: debugAvailableWithdrawal,
+      });
 
       setSummary({
         adReward: round2(sumAmounts(adRows.data)),
