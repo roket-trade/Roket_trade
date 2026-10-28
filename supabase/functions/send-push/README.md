@@ -119,6 +119,15 @@ gateway's JWT check). The function authorizes every call itself:
 Both treat the push as best-effort: the money movement is already committed, so a
 failed notification is logged and never retried or surfaced as an error.
 
+## CORS
+
+The admin panel calls this function from the browser, so the browser sends a
+preflight `OPTIONS` first. That request is answered with `200 ok` and
+`Access-Control-Allow-Origin/Headers/Methods`, and **every** response — including
+`400`, `401`, `500` — carries the same headers. Skipping that (previously OPTIONS
+fell through to the 405 branch) makes the browser drop the real POST, and the
+caller only ever sees "Failed to fetch".
+
 ## Deploy
 
 ```bash

@@ -33,6 +33,18 @@ const ONESIGNAL_API_URL =
   Deno.env.get("ONESIGNAL_API_URL") ?? "https://api.onesignal.com/notifications";
 const DEFAULT_ONESIGNAL_APP_ID = "2211a014-e833-4ec6-a9b5-c9de8c0f50de";
 
+/**
+ * CORS. The admin panel calls this function from the browser, so the browser
+ * sends a preflight OPTIONS first. Without these headers on *every* response
+ * (including 400/401/500) the preflight fails, the POST is never sent, and the
+ * admin console only ever shows "Failed to fetch".
+ */
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+};
+
 /** OneSignal rejects oversized payloads; clamp before spending a request. */
 const MAX_TITLE_LENGTH = 120;
 const MAX_MESSAGE_LENGTH = 600;
@@ -65,7 +77,9 @@ function normalizeSubscriptionIds(body: SendPushRequest): string[] {
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { "content-type": "application/json" },
+    // Every JSON reply — success or 400/401/500 — must carry CORS headers, or
+    // the browser discards the response and the caller only sees "Failed to fetch".
+    headers: { ...corsHeaders, "content-type": "application/json" },
   });
 }
 
@@ -120,6 +134,12 @@ async function isAdminCaller(
 }
 
 async function handle(request: Request): Promise<Response> {
+  // Absolute first check: answer the CORS preflight before anything else can
+  // reject it (the old code answered OPTIONS with 405, so the POST never ran).
+  if (request.method === "OPTIONS") {
+    return new Response("ok", { headers: corsHeaders });
+  }
+
   if (request.method !== "POST") {
     return json({ ok: false, error: "Method not allowed" }, 405);
   }
