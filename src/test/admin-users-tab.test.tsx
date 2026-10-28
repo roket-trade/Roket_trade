@@ -213,15 +213,6 @@ const hoisted = vi.hoisted(() => {
     affectedRows: true,
     primaryEmailError: null as { code: string; message: string } | null,
     resetPassword: vi.fn(() => Promise.resolve({ data: {}, error: null })),
-    // send-email edge function, invoked for withdrawal decisions.
-    sendEmail: vi.fn(
-      async (_name: string, _options?: unknown): Promise<{ data: unknown; error: unknown }> => ({
-        data: { ok: true, id: "resend-1" },
-        error: null,
-      }),
-    ),
-    // supabase.auth.getSession() state; null models a signed-out admin.
-    session: { access_token: "admin-access-token" } as { access_token: string } | null,
   };
 });
 
@@ -250,10 +241,9 @@ vi.mock("@/integrations/supabase/client", () => {
       cols: string;
       column?: string;
       value?: unknown;
-      filters: { column: string; value: unknown }[];
       payload?: Record<string, unknown>;
       limited: boolean;
-    } = { cols: initialCols, limited: false, filters: [] };
+    } = { cols: initialCols, limited: false };
     const builder = {
       select: (cols?: string) => {
         state.cols = cols ?? "";
@@ -262,7 +252,6 @@ vi.mock("@/integrations/supabase/client", () => {
       eq: (column: string, value: unknown) => {
         state.column = column;
         state.value = value;
-        state.filters.push({ column, value });
         return builder;
       },
       in: () => builder,
@@ -296,20 +285,15 @@ vi.mock("@/integrations/supabase/client", () => {
           );
         }
         // The All Transactions tab asks for the latest 100 rows with no filter.
-        if (table === "transactions" && state.limited && !state.cols.includes("profiles(email)")) {
+        if (
+          table === "transactions" &&
+          state.limited &&
+          !state.cols.includes("profiles(email)")
+        ) {
           return Promise.resolve({ data: hoisted.allTransactions, error: null }).then(
             onFulfilled,
             onRejected,
           );
-        }
-        // Queue tabs (pending deposits / withdrawals) filter by type + status.
-        if (table === "transactions" && state.filters.some((f) => f.column === "type")) {
-          const rows = hoisted.transactions.filter((tx) =>
-            state.filters.every(
-              (filter) => (tx as Record<string, unknown>)[filter.column] === filter.value,
-            ),
-          );
-          return Promise.resolve({ data: rows, error: null }).then(onFulfilled, onRejected);
         }
         // The transaction-history modal filters by user_id; the queue tabs use
         // type/status filters and keep returning their empty fixture.
@@ -332,13 +316,6 @@ vi.mock("@/integrations/supabase/client", () => {
     }
     if (table === "profiles" && cols === "referred_by") {
       return { data: hoisted.fallbackReferrals, error: null };
-    }
-    if (table === "profiles" && cols === "id,main_balance,extra_balance") {
-      // Rejecting a withdrawal refunds the balance on the profile it reads.
-      return {
-        data: { id: "user-1", main_balance: 125.5, extra_balance: 10 },
-        error: null,
-      };
     }
     if (table === "transactions" && cols.includes("profiles(email)")) {
       // profiles has no email column in this database, so PostgREST rejects the
@@ -393,12 +370,8 @@ vi.mock("@/integrations/supabase/client", () => {
       },
       auth: {
         getUser: () => Promise.resolve({ data: { user: { id: "admin-1" } }, error: null }),
-        getSession: () => Promise.resolve({ data: { session: hoisted.session }, error: null }),
         resetPasswordForEmail: hoisted.resetPassword,
         signOut: vi.fn(() => Promise.resolve({ error: null })),
-      },
-      functions: {
-        invoke: hoisted.sendEmail,
       },
     },
   };
@@ -434,7 +407,6 @@ describe("Admin user management tab", () => {
     hoisted.affectedRows = true;
     hoisted.primaryEmailError = null;
     hoisted.aggregateRpcError = false;
-    hoisted.session = { access_token: "admin-access-token" };
   });
 
   it("shows earned totals, available balance and referrals — never deposit balances", async () => {
@@ -695,7 +667,6 @@ describe("Admin panel layout and All Transactions tab", () => {
     hoisted.affectedRows = true;
     hoisted.primaryEmailError = null;
     hoisted.aggregateRpcError = false;
-    hoisted.session = { access_token: "admin-access-token" };
   });
 
   const openTransactionsTab = async () => {
@@ -731,7 +702,14 @@ describe("Admin panel layout and All Transactions tab", () => {
   it("renders every recent transaction with email, type, amount, status and hash", async () => {
     await openTransactionsTab();
 
-    for (const header of ["Date/Time", "User Email", "Type", "Amount", "Status", "Details"]) {
+    for (const header of [
+      "Date/Time",
+      "User Email",
+      "Type",
+      "Amount",
+      "Status",
+      "Details",
+    ]) {
       expect(await screen.findByRole("columnheader", { name: header })).toBeInTheDocument();
     }
 
@@ -771,111 +749,8 @@ describe("Admin panel layout and All Transactions tab", () => {
   it("counts the loaded transactions in the sidebar tab", async () => {
     await openTransactionsTab();
 
-    expect(await screen.findByRole("button", { name: "All Transactions (5)" })).toBeInTheDocument();
-  });
-
-  describe("withdrawal notification emails", () => {
-    const openWithdrawalsTab = async () => {
-      render(<Admin />);
-      const sidebar = await screen.findByRole("navigation", { name: "Admin sections" });
-      fireEvent.click(within(sidebar).getByRole("button", { name: /Pending Withdrawals/ }));
-    };
-
-    const sentEmail = () => {
-      const call = hoisted.sendEmail.mock.calls[0] as unknown as [
-        string,
-        { body: { to: string; subject: string; html: string } },
-      ];
-      if (!call) throw new Error("expected a send-email invocation");
-      return call;
-    };
-
-    it("emails the user when a withdrawal is approved", async () => {
-      await openWithdrawalsTab();
-      fireEvent.click(await screen.findByRole("button", { name: "Approve" }));
-
-      await waitFor(() => expect(hoisted.sendEmail).toHaveBeenCalledTimes(1));
-
-      const [fn, options] = sentEmail();
-      expect(fn).toBe("send-email");
-      expect(options.body.to).toBe("alice@example.com");
-      expect(options.body.subject).toContain("approved");
-      expect(options.body.subject).toContain("$50.00");
-      expect(options.body.html).toContain("Withdrawal approved");
-      expect(options.body.html).toContain("$50.00");
-      // Dark layout with the neon-green success accent.
-      expect(options.body.html).toContain("background:#080b0a");
-      expect(options.body.html).toContain("#39ff14");
-    });
-
-    it("emails the user when a withdrawal is rejected and refunded", async () => {
-      await openWithdrawalsTab();
-      fireEvent.click(await screen.findByRole("button", { name: "Reject + Refund" }));
-
-      await waitFor(() => expect(hoisted.sendEmail).toHaveBeenCalledTimes(1));
-
-      const [fn, options] = sentEmail();
-      expect(fn).toBe("send-email");
-      expect(options.body.to).toBe("alice@example.com");
-      expect(options.body.subject).toContain("rejected");
-      expect(options.body.html).toContain("Withdrawal rejected");
-      expect(options.body.html).toContain("returned to your Roket balance");
-      expect(options.body.html).toContain("#ff5a72");
-      // The ledger write still happened: rejected + refunded.
-      expect(
-        hoisted.updates.some(
-          (update) =>
-            update.table === "transactions" &&
-            update.payload["status"] === "rejected" &&
-            update.value === "tx-2",
-        ),
-      ).toBe(true);
-    });
-
-    it("keeps the decision when the email cannot be sent", async () => {
-      hoisted.sendEmail.mockImplementationOnce(() =>
-        Promise.resolve({ data: null, error: { message: "send-email failed" } }),
-      );
-
-      await openWithdrawalsTab();
-      fireEvent.click(await screen.findByRole("button", { name: "Approve" }));
-
-      await waitFor(() => expect(toast.warning).toHaveBeenCalled());
-      // The withdrawal is still completed — a mail failure never rolls it back.
-      expect(hoisted.updates.some((u) => u.payload["status"] === "completed")).toBe(true);
-      expect(screen.queryByText("alice@example.com")).not.toBeInTheDocument();
-    });
-
-    it("skips the email and warns when the admin has no session", async () => {
-      hoisted.session = null;
-
-      await openWithdrawalsTab();
-      fireEvent.click(await screen.findByRole("button", { name: "Approve" }));
-
-      await waitFor(() =>
-        expect(toast.warning).toHaveBeenCalledWith(expect.stringContaining("signed out")),
-      );
-      // No session means invoke() would send no Authorization header (401), so
-      // the panel must not call the function at all.
-      expect(hoisted.sendEmail).not.toHaveBeenCalled();
-      expect(hoisted.updates.some((u) => u.payload["status"] === "completed")).toBe(true);
-    });
-
-    it("retries with the capitalised slug when the gateway returns 404", async () => {
-      hoisted.sendEmail
-        .mockImplementationOnce(async () => ({
-          data: null,
-          error: Object.assign(new Error("Not Found"), { context: { status: 404 } }),
-        }))
-        .mockImplementationOnce(async () => ({ data: { ok: true, id: "resend-1" }, error: null }));
-
-      await openWithdrawalsTab();
-      fireEvent.click(await screen.findByRole("button", { name: "Approve" }));
-
-      await waitFor(() => expect(hoisted.sendEmail).toHaveBeenCalledTimes(2));
-      expect(hoisted.sendEmail.mock.calls[0]?.[0]).toBe("send-email");
-      expect(hoisted.sendEmail.mock.calls[1]?.[0]).toBe("Send-email");
-      expect(toast.warning).not.toHaveBeenCalled();
-    });
+    expect(
+      await screen.findByRole("button", { name: "All Transactions (5)" }),
+    ).toBeInTheDocument();
   });
 });

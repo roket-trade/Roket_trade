@@ -7,10 +7,6 @@ import { HeaderAuthNav } from "@/components/HeaderAuthNav";
 import { RequireAdmin } from "@/components/RequireAdmin";
 import { supabase } from "@/integrations/supabase/client";
 import type { TablesUpdate } from "@/integrations/supabase/types";
-import {
-  withdrawalEmailHtml,
-  withdrawalEmailSubject,
-} from "@/lib/email-templates";
 
 export const Route = createFileRoute("/admin")({
   head: () => ({
@@ -456,34 +452,6 @@ async function updateProfile(
   }
   console.log(`[admin] ${action}: profile updated`, { userId, columns: Object.keys(patch) });
 }
-
-// Supabase Edge Function slugs are case-sensitive. Try the deployed name first
-// and fall back to the capitalised variant when the gateway answers 404, so a
-// dashboard rename (e.g. "Send-email") cannot silently break the notices.
-const SEND_EMAIL_SLUGS = ["send-email", "Send-email"] as const;
-
-type SendEmailBody = { to: string; subject: string; html: string };
-
-/**
- * Invoke send-email. No manual Authorization header: `supabase.functions.invoke`
- * attaches `apikey` plus the signed-in user's access token itself.
- */
-async function invokeSendEmail(body: SendEmailBody): Promise<{ id: string | null }> {
-  let lastError: unknown = null;
-
-  for (const slug of SEND_EMAIL_SLUGS) {
-    const { data, error } = await supabase.functions.invoke(slug, { body });
-    if (!error) return { id: (data as { id?: string | null } | null)?.id ?? null };
-
-    lastError = error;
-    const status = (error as { context?: { status?: number } }).context?.status;
-    if (status !== 404) break;
-    console.warn(`[admin] no edge function named "${slug}" (404) — retrying with the next slug.`);
-  }
-
-  throw lastError instanceof Error ? lastError : new Error(String(lastError ?? "send-email failed"));
-}
-
 function Admin() {
   return (
     <RequireAdmin>
@@ -775,64 +743,6 @@ function AdminContent() {
     }
   };
 
-  // Email the user about a withdrawal decision through the send-email Edge
-  // Function. Deliberately best effort: the ledger write already happened, so a
-  // mail failure must never surface as a failed approval. The address comes from
-  // the shared email map (profiles has no email column) or a targeted
-  // admin_user_emails() lookup when the row was loaded before the map warmed up.
-  const notifyWithdrawal = useCallback(
-    async (tx: Tx, status: "completed" | "rejected") => {
-      if (!tx.user_id) return;
-      try {
-        let to = emails[tx.user_id];
-        if (!to) {
-          const { map } = await fetchEmails([tx.user_id]);
-          to = map[tx.user_id];
-          if (to) setEmails((prev) => ({ ...prev, ...map }));
-        }
-        if (!to) {
-          console.warn("[admin] withdrawal email skipped: no address for user", tx.user_id);
-          return;
-        }
-
-        // `supabase.functions.invoke()` attaches the signed-in user's access
-        // token itself (and skips the Authorization header entirely when there
-        // is no session). The gateway answers 401 in that case, so surface the
-        // session state here instead of guessing at a missing secret.
-        const { data: sessionData } = await supabase.auth.getSession();
-        const session = sessionData.session;
-        console.log(
-          "[admin] send-email session token:",
-          session?.access_token
-            ? `${session.access_token.slice(0, 12)}… (${session.access_token.length} chars)`
-            : null,
-        );
-        if (!session) {
-          console.error("[admin] withdrawal email skipped: no Supabase session at invoke time");
-          toast.warning("Withdrawal updated, but you are signed out — no email was sent.");
-          return;
-        }
-
-        const amount = money(Math.abs(Number(tx.amount)));
-        const { id } = await invokeSendEmail({
-          to,
-          subject: withdrawalEmailSubject({ amount, status }),
-          html: withdrawalEmailHtml({ amount, status, walletAddress: tx.wallet_address }),
-        });
-        console.log("[admin] withdrawal email sent", { userId: tx.user_id, status, id });
-      } catch (err) {
-        const status = (err as { context?: { status?: number } }).context?.status;
-        console.error("[admin] withdrawal email failed:", { status, err });
-        toast.warning(
-          status === 401
-            ? "Withdrawal updated, but the email was rejected (401) — check the send-email deployment/auth."
-            : "Withdrawal updated, but the confirmation email failed to send.",
-        );
-      }
-    },
-    [emails],
-  );
-
   const approveWithdrawal = async (tx: Tx) => {
     setBusyId(tx.id);
     try {
@@ -840,7 +750,6 @@ function AdminContent() {
       if (error) throw error;
       setWithdrawals((w) => w.filter((t) => t.id !== tx.id));
       toast.success("Withdrawal completed.");
-      void notifyWithdrawal(tx, "completed");
       void refreshAggregates();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Couldn't approve withdrawal.");
@@ -870,7 +779,6 @@ function AdminContent() {
       if (tErr) throw tErr;
       setWithdrawals((w) => w.filter((t) => t.id !== tx.id));
       toast.success(`Rejected. ${money(refund)} refunded.`);
-      void notifyWithdrawal(tx, "rejected");
       void refreshAggregates();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Couldn't reject withdrawal.");

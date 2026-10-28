@@ -5,9 +5,3 @@ project_id = "pnzspoelivyihngacssv"
 # The function still rejects unauthorized callers itself.
 [functions.verify-crypto-deposit]
 verify_jwt = false
-
-# send-email authorises every call itself: service-role key (other Edge
-# Functions) or a signed-in admin's access token. The gateway check is disabled
-# because newer Supabase secret keys are opaque strings, not bearer JWTs.
-[functions.send-email]
-verify_jwt = false
