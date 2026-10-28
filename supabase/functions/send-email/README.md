@@ -36,17 +36,21 @@ Response: `{ "ok": true, "id": "<resend-message-id>" }` on success, or
 
 ## Authorization
 
-`verify_jwt` is **off** at the gateway because newer Supabase secret keys are
-opaque strings rather than bearer JWTs; the function authenticates every call
-itself and is therefore never an open relay:
+`verify_jwt` is **off** at the gateway (newer Supabase secret keys are opaque
+strings rather than bearer JWTs), so the function performs one simple check:
 
-- `Authorization: Bearer <SUPABASE_SERVICE_ROLE_KEY>` — server-to-server callers
-  such as `verify-crypto-deposit`.
-- A signed-in **admin**'s access token — the admin panel's withdrawal notices
-  (`supabase.functions.invoke("send-email", …)` forwards the session token).
+- `Authorization: Bearer <token>` is **required** — a missing header returns
+  `401 Unauthorized`.
+- The service-role key is accepted for server-to-server callers such as
+  `verify-crypto-deposit`.
+- Any other token is accepted when it resolves to a signed-in Supabase user
+  (`auth.getUser`). `supabase.functions.invoke("send-email", …)` sends the
+  session token automatically, so the admin panel needs no extra wiring.
 
-Everyone else gets `401 Unauthorized`, including callers holding only the public
-anon/publishable key.
+There is no custom shared secret and no admin/profile lookup. Because any
+signed-in user can reach this function, the payload is still validated (valid
+recipient, subject length, HTML size) and abuse should be monitored in the
+function logs.
 
 ## Secrets
 

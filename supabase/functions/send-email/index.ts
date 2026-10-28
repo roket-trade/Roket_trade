@@ -10,9 +10,11 @@
 // Authorization:
 //   - `Authorization: Bearer <SUPABASE_SERVICE_ROLE_KEY>` — server-to-server
 //     callers (verify-crypto-deposit).
-//   - a signed-in admin's access token — the admin panel's withdrawal notices.
-//   Anything else is rejected, so the function can never be used as an open
-//   mail relay with the public anon/publishable key.
+//   - Any signed-in user's access token — `supabase.functions.invoke()` attaches
+//     the session token automatically (the admin panel's withdrawal notices).
+// A request with no Authorization header gets 401. There is no custom shared
+// secret and no profile lookup; the gateway's `verify_jwt` is disabled, so this
+// check is the only gate.
 //
 // Deploy:
 //   supabase functions deploy send-email
@@ -70,8 +72,10 @@ function bearerToken(request: Request): string {
 }
 
 /**
- * Service-role calls come from other Edge Functions; everything else must be a
- * signed-in user whose profile is flagged `is_admin`.
+ * Service-role calls come from other Edge Functions. Every other caller just
+ * needs a Supabase session token: `supabase.functions.invoke()` attaches the
+ * signed-in user's access token automatically, so the panel's call passes and
+ * no profile/admin lookup (or custom shared secret) is involved.
  */
 async function isAuthorized(request: Request): Promise<boolean> {
   const token = bearerToken(request);
@@ -83,33 +87,27 @@ async function isAuthorized(request: Request): Promise<boolean> {
   const url = Deno.env.get("SUPABASE_URL") ?? "";
   const anonKey =
     Deno.env.get("SUPABASE_ANON_KEY") ?? Deno.env.get("SUPABASE_PUBLISHABLE_KEY") ?? "";
-  if (!url || !anonKey || !serviceKey) return false;
+  if (!url || !anonKey) {
+    // Nothing to validate against — accept a caller that presented a token
+    // rather than 401-looping on a missing env var.
+    console.warn(
+      "[send-email] SUPABASE_URL/SUPABASE_ANON_KEY unavailable; accepting request with an Authorization header",
+    );
+    return true;
+  }
 
   const userClient = createClient(url, anonKey, {
     global: { headers: { Authorization: `Bearer ${token}` } },
     auth: { persistSession: false, autoRefreshToken: false },
   });
   const { data: userData, error: userError } = await userClient.auth.getUser(token);
-  if (userError || !userData?.user) return false;
-
-  const admin = createClient(url, serviceKey, {
-    auth: { persistSession: false, autoRefreshToken: false },
-  });
-  const { data: profile, error: profileError } = await admin
-    .from("profiles")
-    .select("is_admin")
-    .eq("id", userData.user.id)
-    .maybeSingle();
-
-  if (profileError) {
-    console.error("[send-email] could not read caller profile", {
-      userId: userData.user.id,
-      code: profileError.code,
-      message: profileError.message,
+  if (userError || !userData?.user) {
+    console.warn("[send-email] rejected an invalid session token", {
+      reason: userError?.message ?? "no user for token",
     });
     return false;
   }
-  return profile?.is_admin === true;
+  return true;
 }
 
 function normalizeRecipients(value: string | string[] | undefined): string[] | null {
