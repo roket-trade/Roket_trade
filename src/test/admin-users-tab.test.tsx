@@ -220,6 +220,8 @@ const hoisted = vi.hoisted(() => {
         error: null,
       }),
     ),
+    // supabase.auth.getSession() state; null models a signed-out admin.
+    session: { access_token: "admin-access-token" } as { access_token: string } | null,
   };
 });
 
@@ -391,6 +393,7 @@ vi.mock("@/integrations/supabase/client", () => {
       },
       auth: {
         getUser: () => Promise.resolve({ data: { user: { id: "admin-1" } }, error: null }),
+        getSession: () => Promise.resolve({ data: { session: hoisted.session }, error: null }),
         resetPasswordForEmail: hoisted.resetPassword,
         signOut: vi.fn(() => Promise.resolve({ error: null })),
       },
@@ -431,6 +434,7 @@ describe("Admin user management tab", () => {
     hoisted.affectedRows = true;
     hoisted.primaryEmailError = null;
     hoisted.aggregateRpcError = false;
+    hoisted.session = { access_token: "admin-access-token" };
   });
 
   it("shows earned totals, available balance and referrals — never deposit balances", async () => {
@@ -691,6 +695,7 @@ describe("Admin panel layout and All Transactions tab", () => {
     hoisted.affectedRows = true;
     hoisted.primaryEmailError = null;
     hoisted.aggregateRpcError = false;
+    hoisted.session = { access_token: "admin-access-token" };
   });
 
   const openTransactionsTab = async () => {
@@ -839,6 +844,38 @@ describe("Admin panel layout and All Transactions tab", () => {
       // The withdrawal is still completed — a mail failure never rolls it back.
       expect(hoisted.updates.some((u) => u.payload["status"] === "completed")).toBe(true);
       expect(screen.queryByText("alice@example.com")).not.toBeInTheDocument();
+    });
+
+    it("skips the email and warns when the admin has no session", async () => {
+      hoisted.session = null;
+
+      await openWithdrawalsTab();
+      fireEvent.click(await screen.findByRole("button", { name: "Approve" }));
+
+      await waitFor(() =>
+        expect(toast.warning).toHaveBeenCalledWith(expect.stringContaining("signed out")),
+      );
+      // No session means invoke() would send no Authorization header (401), so
+      // the panel must not call the function at all.
+      expect(hoisted.sendEmail).not.toHaveBeenCalled();
+      expect(hoisted.updates.some((u) => u.payload["status"] === "completed")).toBe(true);
+    });
+
+    it("retries with the capitalised slug when the gateway returns 404", async () => {
+      hoisted.sendEmail
+        .mockImplementationOnce(async () => ({
+          data: null,
+          error: Object.assign(new Error("Not Found"), { context: { status: 404 } }),
+        }))
+        .mockImplementationOnce(async () => ({ data: { ok: true, id: "resend-1" }, error: null }));
+
+      await openWithdrawalsTab();
+      fireEvent.click(await screen.findByRole("button", { name: "Approve" }));
+
+      await waitFor(() => expect(hoisted.sendEmail).toHaveBeenCalledTimes(2));
+      expect(hoisted.sendEmail.mock.calls[0]?.[0]).toBe("send-email");
+      expect(hoisted.sendEmail.mock.calls[1]?.[0]).toBe("Send-email");
+      expect(toast.warning).not.toHaveBeenCalled();
     });
   });
 });
