@@ -35,7 +35,7 @@ const { mockUser, mockProfile, state } = vi.hoisted(() => {
     mockUser: user,
     mockProfile: profile,
     // Rows the dashboard wrote during the test, so a later fetch sees them.
-    state: { inserted: [] as Array<Record<string, unknown>> },
+    state: { inserted: [] as Array<Record<string, unknown>>, pendingError: false },
   };
 });
 
@@ -112,10 +112,31 @@ vi.mock("@/integrations/supabase/client", () => {
               },
             ];
           } else if (filters["type"] === "withdrawal" && filters["status"] === "pending") {
+            if (state.pendingError) {
+              // Models an RLS/permission failure on the filtered read.
+              return Promise.resolve({
+                data: null,
+                error: {
+                  code: "42501",
+                  message: "permission denied for table transactions",
+                },
+              }).then(resolve);
+            }
             // The dashboard's own pending-withdrawal query: whatever is stored.
             data = state.inserted
               .filter((row) => row["type"] === "withdrawal" && row["status"] === "pending")
               .map((row) => ({ amount: row["amount"] }));
+          } else if (filters["type"] === "withdrawal" && !filters["status"]) {
+            // Recent withdrawals across every status — the dashboard's fallback
+            // source when the filtered pending read is blocked.
+            data = state.inserted
+              .filter((row) => row["type"] === "withdrawal")
+              .map((row, index) => ({
+                id: `wd-${index}`,
+                amount: row["amount"],
+                created_at: row["created_at"] ?? "2026-02-05T00:00:00.000Z",
+                status: row["status"],
+              }));
           }
         }
 
@@ -161,6 +182,7 @@ async function submitWithdrawal(amount: string) {
 afterEach(() => {
   cleanup();
   state.inserted.length = 0;
+  state.pendingError = false;
   vi.restoreAllMocks();
 });
 
@@ -204,5 +226,50 @@ describe("Dashboard withdrawal submission", () => {
     await submitWithdrawal("50");
 
     expect(await screen.findByTestId("withdrawal-success-bar")).toBeInTheDocument();
+  });
+});
+
+/**
+ * A pending request is money the user already committed: every page load has to
+ * keep it out of Available Balance. These cases model a reload, where the
+ * dashboard has no in-memory state to lean on and must trust the database read.
+ */
+describe("Dashboard pending withdrawals on load", () => {
+  const pendingRow = (amount: number) => ({
+    type: "withdrawal",
+    amount,
+    status: "pending",
+    created_at: "2026-02-05T09:00:00.000Z",
+  });
+
+  it("keeps the reduced balance when a pending request is already stored", async () => {
+    state.inserted.push(pendingRow(-50));
+
+    render(<DashboardPage />);
+
+    const card = await withdrawCard();
+    // 270 in the wallet - 180 deposited - 50 pending = 40.
+    expect(await card.findByText("$40.00")).toBeInTheDocument();
+  });
+
+  it("subtracts the absolute value even when the pending row has no sign", async () => {
+    state.inserted.push(pendingRow(50));
+
+    render(<DashboardPage />);
+
+    const card = await withdrawCard();
+    expect(await card.findByText("$40.00")).toBeInTheDocument();
+  });
+
+  it("falls back to the recent-withdrawals read when the pending query is denied", async () => {
+    state.inserted.push(pendingRow(-50));
+    state.pendingError = true;
+
+    render(<DashboardPage />);
+
+    const card = await withdrawCard();
+    // The filtered read failed, but the same row is visible in the unfiltered
+    // recent-withdrawals list, so the balance still drops by 50.
+    expect(await card.findByText("$40.00")).toBeInTheDocument();
   });
 });

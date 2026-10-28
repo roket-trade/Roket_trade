@@ -892,6 +892,10 @@ function DashboardContent() {
   const [profileError, setProfileError] = useState("");
   const [refreshingProfile, setRefreshingProfile] = useState(false);
   const requestId = useRef(0);
+  // Last pending-withdrawal total the UI computed. Used only for diagnostics:
+  // a read that suddenly reports 0 after the dashboard knew about a request is
+  // the signature of a policy/visibility problem, not of a real cancellation.
+  const lastPendingWithdrawals = useRef(0);
   const [adOpen, setAdOpen] = useState(false);
   const [adSecondsLeft, setAdSecondsLeft] = useState(AD_SECONDS);
   const [videoDone, setVideoDone] = useState(false);
@@ -1115,9 +1119,60 @@ function DashboardContent() {
         | undefined;
 
       const totalDeposited = round2(sumDeposits(depositRows.data));
-      const totalPendingWithdrawals = round2(
-        sumAmounts(pendingWithdrawalRows.data),
-      );
+
+      // Pending withdrawal requests are money the user already committed, so they
+      // must keep reducing Available Balance on every load — not only in the tab
+      // that submitted the request. Read them explicitly and log both the rows
+      // and any error: a silently hidden/errored read is what makes the balance
+      // jump back to its pre-request value after a refresh.
+      const pendingWithdrawalsData = (pendingWithdrawalRows.data ?? []) as unknown as Array<{
+        amount: number | string | null;
+      }>;
+
+      console.log("PENDING WITHDRAWALS FROM DB:", pendingWithdrawalsData);
+
+      if (pendingWithdrawalRows.error) {
+        console.error("[dashboard] pending withdrawals query failed", {
+          userId: currentUser.id,
+          message: pendingWithdrawalRows.error.message,
+          code: pendingWithdrawalRows.error.code,
+          details: pendingWithdrawalRows.error.details,
+          hint: pendingWithdrawalRows.error.hint,
+        });
+      }
+
+      // The recent-withdrawals query reads the same table WITHOUT a status
+      // filter, so it can still carry the pending rows when the filtered read is
+      // blocked or errors. Prefer it over reporting "nothing pending".
+      const pendingFromRecent = (
+        (recentWithdrawalRows.data ?? []) as unknown as RecentWithdrawal[]
+      ).filter((row) => row.status === "pending");
+      const pendingSource =
+        pendingWithdrawalRows.error && pendingWithdrawalsData.length === 0
+          ? pendingFromRecent
+          : pendingWithdrawalsData;
+
+      // Pending amounts are stored negative (they are outflows); the balance
+      // impact is always the absolute value.
+      const totalPendingWithdrawals = round2(sumAmounts(pendingSource));
+
+      const pendingReadFailed = Boolean(pendingWithdrawalRows.error);
+      // A failed read must not resurrect the pre-request balance: keep the last
+      // figure the dashboard computed until a successful read replaces it.
+      const effectivePendingWithdrawals =
+        pendingReadFailed && totalPendingWithdrawals === 0
+          ? lastPendingWithdrawals.current
+          : totalPendingWithdrawals;
+
+      if (effectivePendingWithdrawals === 0 && lastPendingWithdrawals.current > 0) {
+        console.warn(
+          "[dashboard] pending withdrawals read returned 0 while the dashboard last saw",
+          lastPendingWithdrawals.current,
+          "— check that the transactions SELECT policy lets users read their own status = 'pending' rows",
+          { userId: currentUser.id, queryError: pendingWithdrawalRows.error?.message ?? null },
+        );
+      }
+      lastPendingWithdrawals.current = effectivePendingWithdrawals;
 
       const dailyProfitTotal = round2(
         Math.max(
@@ -1165,7 +1220,9 @@ function DashboardContent() {
         dailyProfit: dailyProfitTotal,
         totalWithdrawn: sumAmounts(withdrawals),
         totalDeposited,
-        totalPendingWithdrawals,
+        // The UI state the Available Balance card derives from: total earnings
+        // minus deposits minus every pending request (see availableWithdrawal).
+        totalPendingWithdrawals: effectivePendingWithdrawals,
         latestWithdraw: withdrawals[0]
           ? {
               amount: Math.abs(Number(withdrawals[0].amount) || 0),
@@ -1505,6 +1562,9 @@ function DashboardContent() {
       ...current,
       totalPendingWithdrawals: round2(current.totalPendingWithdrawals + optimisticAmount),
     }));
+    // Keep the diagnostic mirror in step, so a failing read right after this
+    // submit can fall back to the amount the user just committed.
+    lastPendingWithdrawals.current = round2(lastPendingWithdrawals.current + optimisticAmount);
 
     let inserted = false;
     try {
@@ -1581,6 +1641,9 @@ function DashboardContent() {
             Math.max(0, current.totalPendingWithdrawals - optimisticAmount),
           ),
         }));
+        lastPendingWithdrawals.current = round2(
+          Math.max(0, lastPendingWithdrawals.current - optimisticAmount),
+        );
       } else {
         // The row landed but something after it failed: re-read the server state
         // rather than guessing.
