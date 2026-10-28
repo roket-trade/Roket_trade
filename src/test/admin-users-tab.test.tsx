@@ -213,6 +213,22 @@ const hoisted = vi.hoisted(() => {
     affectedRows: true,
     primaryEmailError: null as { code: string; message: string } | null,
     resetPassword: vi.fn(() => Promise.resolve({ data: {}, error: null })),
+    // Pending deposits rendered on the Deposits tab (empty for every other test).
+    pendingDeposits: [] as {
+      id: string;
+      user_id: string;
+      type: string;
+      amount: number;
+      deposit_amount: number | null;
+      plan_name: string | null;
+      network: string | null;
+      wallet_address: string | null;
+      tx_hash: string | null;
+      status: string;
+      created_at: string;
+    }[],
+    // supabase.functions.invoke — the send-push call under test.
+    pushInvoke: vi.fn(() => Promise.resolve({ data: { ok: true }, error: null })),
   };
 });
 
@@ -241,6 +257,9 @@ vi.mock("@/integrations/supabase/client", () => {
       cols: string;
       column?: string;
       value?: unknown;
+      // `transactions.type` filter, so the deposits and withdrawals queues can
+      // return different fixtures.
+      type?: string;
       payload?: Record<string, unknown>;
       limited: boolean;
     } = { cols: initialCols, limited: false };
@@ -252,6 +271,7 @@ vi.mock("@/integrations/supabase/client", () => {
       eq: (column: string, value: unknown) => {
         state.column = column;
         state.value = value;
+        if (column === "type") state.type = String(value);
         return builder;
       },
       in: () => builder,
@@ -280,6 +300,13 @@ vi.mock("@/integrations/supabase/client", () => {
           // landed; an empty array models an RLS-blocked UPDATE.
           const affected = hoisted.affectedRows ? { id: state.value } : null;
           return Promise.resolve({ data: affected ? [affected] : [], error: null }).then(
+            onFulfilled,
+            onRejected,
+          );
+        }
+        // Pending deposits queue (`type=deposit`, `status=pending`).
+        if (table === "transactions" && state.type === "deposit") {
+          return Promise.resolve({ data: hoisted.pendingDeposits, error: null }).then(
             onFulfilled,
             onRejected,
           );
@@ -342,6 +369,8 @@ vi.mock("@/integrations/supabase/client", () => {
         update: (payload: Record<string, unknown>) =>
           makeBuilder(table, { data: null, error: null }).update(payload),
       }),
+      // supabase.functions.invoke("send-push", …) used by the deposit approval.
+      functions: { invoke: hoisted.pushInvoke },
       rpc: (fn: string, args?: { ids?: string[] | null }) => {
         if (fn === "admin_user_aggregates") {
           if (hoisted.aggregateRpcError) {
@@ -752,5 +781,90 @@ describe("Admin panel layout and All Transactions tab", () => {
     expect(
       await screen.findByRole("button", { name: "All Transactions (5)" }),
     ).toBeInTheDocument();
+  });
+});
+
+/**
+ * Approving a pending deposit must fire the same `send-push` Edge Function the
+ * withdrawals queue uses, but a failed push must never make the approval look
+ * like it failed — the deposit is already completed and credited by then.
+ */
+describe("Admin deposit approval push", () => {
+  const pendingDeposit = () => ({
+    id: "dep-1",
+    user_id: "user-1",
+    type: "deposit",
+    amount: 250,
+    deposit_amount: 250,
+    plan_name: "Plan 2",
+    network: "BEP20",
+    wallet_address: "0xfeed",
+    tx_hash: "0xdeposit",
+    status: "pending",
+    created_at: "2026-02-05T00:00:00.000Z",
+  });
+
+  async function openDepositsTabAndApprove() {
+    render(<Admin />);
+    fireEvent.click(await screen.findByRole("button", { name: /Pending Deposits/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Approve" }));
+  }
+
+  const depositCompleted = () =>
+    hoisted.updates.some(
+      (update) => update.table === "transactions" && update.payload["status"] === "completed",
+    );
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    hoisted.updates.length = 0;
+    hoisted.pendingDeposits.length = 0;
+    hoisted.pendingDeposits.push(pendingDeposit());
+    hoisted.isAdmin = true;
+    hoisted.affectedRows = true;
+    hoisted.primaryEmailError = null;
+    hoisted.aggregateRpcError = false;
+  });
+
+  it("pushes a confirmation to the depositor once the deposit is completed", async () => {
+    await openDepositsTabAndApprove();
+
+    await waitFor(() => expect(hoisted.pushInvoke).toHaveBeenCalledTimes(1));
+    expect(hoisted.pushInvoke).toHaveBeenCalledWith("send-push", {
+      body: {
+        external_user_id: "user-1",
+        title: "Deposit Confirmed",
+        message: "Your deposit of $250 has been successfully confirmed and your plan is active.",
+      },
+    });
+    expect(depositCompleted()).toBe(true);
+    expect(toast.success).toHaveBeenCalled();
+    expect(toast.error).not.toHaveBeenCalled();
+  });
+
+  it("keeps the deposit approved when the push request throws", async () => {
+    hoisted.pushInvoke.mockRejectedValueOnce(new Error("push endpoint unavailable"));
+
+    await openDepositsTabAndApprove();
+
+    await waitFor(() => expect(hoisted.pushInvoke).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(toast.success).toHaveBeenCalled());
+    expect(depositCompleted()).toBe(true);
+    // A push failure is logged, never surfaced as a failed approval.
+    expect(toast.error).not.toHaveBeenCalled();
+  });
+
+  it("keeps the deposit approved when send-push answers with an error", async () => {
+    hoisted.pushInvoke.mockResolvedValueOnce({
+      data: null,
+      error: { name: "FunctionsHttpError", message: "Unauthorized" },
+    });
+
+    await openDepositsTabAndApprove();
+
+    await waitFor(() => expect(hoisted.pushInvoke).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(toast.success).toHaveBeenCalled());
+    expect(depositCompleted()).toBe(true);
+    expect(toast.error).not.toHaveBeenCalled();
   });
 });
