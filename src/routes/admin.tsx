@@ -757,6 +757,21 @@ function AdminContent() {
         if (!/plan_name|plan_(started|expires)_at/i.test(message)) throw err;
         await updateProfile(tx.user_id, { main_balance: nextBal }, "approve deposit (balance only)");
       }
+      // The deposit is already completed and credited at this point, so the push
+      // is best-effort: a failed send is logged and swallowed rather than shown
+      // to the admin as a failed approval.
+      try {
+        const { error: pushErr } = await supabase.functions.invoke("send-push", {
+          body: {
+            external_user_id: tx.user_id,
+            title: "Deposit Confirmed",
+            message: `Your deposit of $${tx.amount} has been successfully confirmed and your plan is active.`,
+          },
+        });
+        if (pushErr) console.warn("[admin] deposit push failed:", pushErr.message, pushErr);
+      } catch (pushErr) {
+        console.warn("[admin] deposit push failed:", pushErr);
+      }
       const refId = (up as { referred_by?: string | null }).referred_by;
       if (refId) {
         const bonus = Math.round(credit * 0.1 * 100) / 100;
