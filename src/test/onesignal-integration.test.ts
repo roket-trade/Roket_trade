@@ -5,12 +5,22 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * the exact init options, a single init per page load, and the identity sync
  * that maps a Supabase user onto an OneSignal external id.
  */
-const { mockInit, mockLogin, mockLogout, mockRequestPermission } = vi.hoisted(() => ({
-  mockInit: vi.fn(() => Promise.resolve()),
-  mockLogin: vi.fn(() => Promise.resolve()),
-  mockLogout: vi.fn(() => Promise.resolve()),
-  mockRequestPermission: vi.fn(() => Promise.resolve(true)),
-}));
+const { mockInit, mockLogin, mockLogout, mockRequestPermission, mockUser } = vi.hoisted(() => {
+  const user = { externalId: undefined as string | undefined };
+  return {
+    mockInit: vi.fn(() => Promise.resolve()),
+    mockLogin: vi.fn((externalId: string) => {
+      user.externalId = externalId;
+      return Promise.resolve();
+    }),
+    mockLogout: vi.fn(() => {
+      user.externalId = undefined;
+      return Promise.resolve();
+    }),
+    mockRequestPermission: vi.fn(() => Promise.resolve(true)),
+    mockUser: user,
+  };
+});
 
 vi.mock("react-onesignal", () => ({
   default: {
@@ -18,6 +28,12 @@ vi.mock("react-onesignal", () => ({
     login: mockLogin,
     logout: mockLogout,
     Notifications: { requestPermission: mockRequestPermission },
+    User: {
+      get externalId() {
+        return mockUser.externalId;
+      },
+      PushSubscription: { id: "sub-1", token: "token-1", optedIn: true },
+    },
   },
 }));
 
@@ -62,6 +78,23 @@ describe("OneSignal integration", () => {
 
     expect(mockInit).toHaveBeenCalledTimes(1);
     expect(mockLogin).toHaveBeenCalledWith("11111111-2222-3333-4444-555555555555");
+  });
+
+  it("confirms the external id is attached after login", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const { syncOneSignalUser } = await loadModule();
+
+    await syncOneSignalUser("user-42");
+
+    expect(mockUser.externalId).toBe("user-42");
+    expect(log).toHaveBeenCalledWith(
+      "[OneSignal] linked user",
+      expect.objectContaining({
+        expectedExternalId: "user-42",
+        externalId: "user-42",
+      }),
+    );
+    log.mockRestore();
   });
 
   it("does not re-login for the same user across renders", async () => {

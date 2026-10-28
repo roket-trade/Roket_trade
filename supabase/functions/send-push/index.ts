@@ -199,14 +199,29 @@ async function handle(request: Request): Promise<Response> {
     );
   }
 
-  // A 200 with zero recipients means the user has no push subscription yet:
-  // not an error, but worth knowing in the logs.
+  // A 200 with zero recipients means the user has no push subscription linked
+  // to this external id: the API accepted the call, there was simply nobody to
+  // notify. The `errors` array OneSignal returns in that case says why, so it is
+  // logged and echoed back instead of being swallowed.
+  const notificationId = typeof result?.id === "string" ? result.id : "";
   const recipients = Number(result?.recipients ?? 0);
+  const errors = result?.errors ?? null;
+
+  console.log("[send-push] OneSignal response", {
+    id: notificationId,
+    recipients,
+    errors,
+    externalUserId,
+  });
+
   if (recipients === 0) {
-    console.warn("[send-push] no push subscription for user", { externalUserId });
+    console.warn("[send-push] nobody to notify: no push subscription carries this external id", {
+      externalUserId,
+      errors,
+    });
   }
 
-  return json({ ok: true, id: result?.id ?? null, recipients }, 200);
+  return json({ ok: true, id: notificationId || null, recipients, errors }, 200);
 }
 
 Deno.serve(handle);

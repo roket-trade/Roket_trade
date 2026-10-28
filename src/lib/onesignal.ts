@@ -67,6 +67,24 @@ async function linkUser(userId: string): Promise<void> {
     await initOneSignal();
     await OneSignal.login(userId);
     linkedUserId = userId;
+
+    // `login()` can resolve before the alias is attached, and a subscription
+    // without the alias is invisible to include_aliases targeting on the
+    // server. Logging the SDK's own view makes an unlinked device obvious.
+    const externalId = OneSignal.User?.externalId;
+    const subscription = OneSignal.User?.PushSubscription;
+    console.log("[OneSignal] linked user", {
+      expectedExternalId: userId,
+      externalId: externalId ?? null,
+      pushSubscriptionId: subscription?.id ?? null,
+      optedIn: subscription?.optedIn ?? null,
+    });
+    if (externalId !== userId) {
+      console.warn(
+        "[OneSignal] external id not attached yet — pushes addressed to this user will reach 0 devices until it is",
+        { expected: userId, actual: externalId ?? null },
+      );
+    }
   } catch (error) {
     console.warn("[OneSignal] could not link the signed-in user:", error);
   }

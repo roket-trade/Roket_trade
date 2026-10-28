@@ -132,23 +132,51 @@ const asNumber = (value: unknown, fallback = 0) => {
  * Best-effort push so a user learns about their withdrawal decision right away.
  * The money has already moved by the time this runs, so a push failure is only
  * logged — it must never surface as an error or make the decision look failed.
+ *
+ * The logs are deliberately verbose: a push that silently reaches 0 devices is
+ * indistinguishable from one that was never sent, so both the request and the
+ * function's reply are printed.
  */
 function sendWithdrawalPush(
   userId: string | null,
   status: "approved" | "rejected",
   amount: number,
 ): void {
-  if (!userId) return;
+  if (!userId) {
+    console.warn("[admin] withdrawal push skipped: transaction has no user_id");
+    return;
+  }
+
+  const body = {
+    external_user_id: userId,
+    title: "Withdrawal Update",
+    message: `Your withdrawal of $${amount.toFixed(2)} has been ${status}.`,
+  };
+  console.log("[admin] invoking send-push", body);
+
   void supabase.functions
-    .invoke("send-push", {
-      body: {
-        external_user_id: userId,
-        title: "Withdrawal Update",
-        message: `Your withdrawal of $${amount.toFixed(2)} has been ${status}.`,
-      },
-    })
-    .then(({ error }) => {
-      if (error) console.warn("[admin] withdrawal push failed:", error.message);
+    .invoke("send-push", { body })
+    .then(({ data, error }) => {
+      if (error) {
+        console.warn("[admin] withdrawal push failed:", error.message, error);
+        return;
+      }
+
+      const reply = data as { recipients?: number; errors?: unknown } | null;
+      const recipients = Number(reply?.recipients ?? 0);
+
+      if (recipients === 0) {
+        // The API accepted the notification but nobody was targeted: the
+        // external id is not attached to any push subscription, i.e. the phone
+        // never ran OneSignal.login(<user id>) with notifications allowed.
+        console.warn(
+          "[admin] push accepted but reached 0 devices — external id not linked to a subscription",
+          reply,
+        );
+        return;
+      }
+
+      console.log("[admin] withdrawal push delivered", reply);
     })
     .catch((err: unknown) => console.warn("[admin] withdrawal push failed:", err));
 }

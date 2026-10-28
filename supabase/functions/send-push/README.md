@@ -40,6 +40,28 @@ All three fields are required. `title` is clamped to 120 characters and
 `recipients: 0` with `ok: true` means the user has no push subscription yet (they
 never granted permission) — the call succeeded, there was nobody to notify.
 
+## Troubleshooting: `recipients: 0`
+
+The external id was not found on any push subscription. Work through these in
+order — the function logs the same checks server-side:
+
+1. **Did the browser link the id?** On the device, open the console after signing
+   in. `src/lib/onesignal.ts` prints `[OneSignal] linked user` with
+   `expectedExternalId` (the Supabase user id), `externalId` (what OneSignal
+   actually attached), `pushSubscriptionId` and `optedIn`. If `externalId` is
+   null/different, the alias never attached and nothing can target that device.
+2. **Was permission granted on *that* device, while signed in?** Permission is
+   per browser: subscribing on a laptop does nothing for a phone.
+3. **Is `external_user_id` the Supabase user id?** The admin panel sends
+   `transactions.user_id`, which equals `auth.users.id` — the same value the
+   browser passes to `OneSignal.login()`. A OneSignal **subscription id** or
+   player id here will not match.
+4. **Check the OneSignal dashboard**: Audience → Users. Search the user id; the
+   entry should show a push subscription under it.
+
+The `errors` array in the response carries OneSignal's own reason, e.g.
+`["All included players are not subscribed"]`.
+
 ## Authorization
 
 Deployed with `--no-verify-jwt` because another Edge Function calls it with the
