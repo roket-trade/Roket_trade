@@ -87,26 +87,25 @@ function Index() {
   const { user, loading: authLoading } = useAuth();
   // Rank of the plan the user already owns (1-4). null = nothing to restrict.
   const [currentPlan, setCurrentPlan] = useState<number | null>(null);
-  // The plan read is async, so the buttons wait for it. Rendering them earlier
-  // flashed an enabled "Choose Plan" on the plan the user already owns — the
-  // effect below runs after the first paint, so the initial value must already
-  // say "loading" when a user is present.
-  const [planLoading, setPlanLoading] = useState(Boolean(user?.id));
+  // Which user the rank above belongs to. `null` means "not read yet", so the
+  // buttons stay skeletons until the read lands — a boolean loading flag seeded
+  // at mount cannot cover the session resolving after mount, which is exactly
+  // the case that flashed "Choose Plan" on the plan the user already owns.
+  const [planLoadedFor, setPlanLoadedFor] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
 
     if (!user?.id) {
       setCurrentPlan(null);
-      setPlanLoading(false);
+      setPlanLoadedFor(null);
       return;
     }
 
-    setPlanLoading(true);
     void fetchCurrentPlanIndex(user.id).then((rank) => {
       if (!active) return;
       setCurrentPlan(rank);
-      setPlanLoading(false);
+      setPlanLoadedFor(user.id);
     });
 
     return () => {
@@ -114,8 +113,9 @@ function Index() {
     };
   }, [user?.id]);
 
-  // Auth + plan both have to settle before a plan button can be trusted.
-  const planPending = authLoading || planLoading;
+  // Auth has to settle and the rank has to be read for *this* user before a plan
+  // button can be trusted.
+  const planPending = authLoading || (user?.id != null && planLoadedFor !== user.id);
 
   return (
     <div className="min-h-screen">

@@ -2,10 +2,14 @@ import type { ReactNode } from "react";
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const state = vi.hoisted(() => ({ plan: "Plan 2" as string | null }));
+const state = vi.hoisted(() => ({
+  plan: "Plan 2" as string | null,
+  user: { id: "user-1" } as { id: string } | null,
+  loading: false,
+}));
 
 vi.mock("@/components/AuthProvider", () => ({
-  useAuth: () => ({ user: { id: "user-1" }, session: null, loading: false }),
+  useAuth: () => ({ user: state.user, session: null, loading: state.loading }),
 }));
 
 vi.mock("@tanstack/react-router", () => ({
@@ -39,6 +43,8 @@ function planCard(name: string) {
 
 beforeEach(() => {
   state.plan = "Plan 2";
+  state.user = { id: "user-1" };
+  state.loading = false;
 });
 
 afterEach(cleanup);
@@ -96,6 +102,28 @@ describe("landing pricing respects the current plan", () => {
       expect(within(planCard("Plan 2")).getByText("Current Plan")).toBeInTheDocument(),
     );
     expect(within(planCard("Plan 2")).queryByTestId("plan-loading-2")).toBeNull();
+  });
+
+  it("keeps the skeleton when the session resolves after mount", async () => {
+    // AuthProvider starts anonymous-and-loading, then resolves the session. Both
+    // values land in one commit, so a loading flag seeded at mount would already
+    // have settled — this is the transition that flashed "Choose Plan".
+    state.user = null;
+    state.loading = true;
+    const { rerender } = render(<Index />);
+    expect(within(planCard("Plan 2")).getByTestId("plan-loading-2")).toBeInTheDocument();
+
+    state.user = { id: "user-1" };
+    state.loading = false;
+    rerender(<Index />);
+
+    // That paint must still be a skeleton: the rank has not been read yet.
+    expect(within(planCard("Plan 2")).queryByRole("link")).toBeNull();
+    expect(within(planCard("Plan 2")).getByTestId("plan-loading-2")).toBeInTheDocument();
+
+    await waitFor(() =>
+      expect(within(planCard("Plan 2")).getByText("Current Plan")).toBeInTheDocument(),
+    );
   });
 
   it("keeps higher plans purchasable", async () => {
