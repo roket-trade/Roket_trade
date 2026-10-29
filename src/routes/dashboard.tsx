@@ -1585,6 +1585,22 @@ function DashboardContent() {
 
     let inserted = false;
     try {
+       // Deduct the withdrawal amount from main_balance immediately on request,
+       // before inserting the pending transaction row.
+       const { data: prof, error: profErr } = await supabase
+         .from("profiles")
+         .select("main_balance")
+         .eq("id", user.id)
+         .maybeSingle();
+       if (profErr) throw profErr;
+       const currentBalance = Number(prof?.main_balance ?? profile?.main_balance ?? 0);
+       const { error: balErr } = await supabase
+         .from("profiles")
+         .update({ main_balance: round2(currentBalance - amount) })
+         .eq("id", user.id);
+       if (balErr) throw balErr;
+
+
       const nowIso = new Date().toISOString();
       const address = selectedWallet.address.trim();
       const { error: txError } = await supabase.from("transactions").insert({
