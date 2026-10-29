@@ -70,6 +70,10 @@ describe("checkout crypto verification handoff", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Submit Payment" }));
 
+    // The deposit is only written after the "did you really send it?" check.
+    expect(insertMock).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Yes, I sent it" }));
+
     await waitFor(() => expect(startVerification).toHaveBeenCalledTimes(1));
 
     expect(insertMock).toHaveBeenCalledTimes(1);

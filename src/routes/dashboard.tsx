@@ -102,6 +102,8 @@ type RecentWithdrawal = {
 type DashboardSummary = {
   adReward: number;
   referralBonus: number;
+  /** One-off $2 bonus granted when KYC is verified — never counted as a referral. */
+  welcomeBonus: number;
   dailyProfit: number;
   totalWithdrawn: number;
   latestWithdraw: LatestWithdraw | null;
@@ -113,6 +115,7 @@ type DashboardSummary = {
 const EMPTY_SUMMARY: DashboardSummary = {
   adReward: 0,
   referralBonus: 0,
+  welcomeBonus: 0,
   dailyProfit: 0,
   totalWithdrawn: 0,
   latestWithdraw: null,
@@ -1091,6 +1094,8 @@ function DashboardContent() {
           .eq("type", "withdrawal")
           .eq("status", "pending")
           .order("created_at", { ascending: false }),
+        // Latest 10 Rewards: ad earnings plus the one-off welcome bonus, so the
+        // $2 KYC bonus shows up in the list next to the ad rewards.
         supabase
           .from("transactions")
           .select("id,amount,created_at")
@@ -1118,8 +1123,8 @@ function DashboardContent() {
           .eq("user_id", currentUser.id)
           .eq("type", "daily_profit")
           .eq("status", "completed"),
-        // The welcome bonus is a one-off referral reward, so the Referral Bonus
-        // row reports referral_bonus + welcome_bonus lifetime totals.
+        // The welcome bonus is a separate one-off KYC reward, never a referral
+        // bonus: it gets its own lifetime row below.
         supabase
           .from("transactions")
           .select("amount")
@@ -1220,6 +1225,13 @@ function DashboardContent() {
 
       const referralBonuses = bonusRows ?? [];
 
+      // The welcome-bonus query is a plain select in the dashboard batch, so the
+      // generated types describe it as a query error on some databases. The rows
+      // are amounts either way.
+      const welcomeBonusRowsData = (welcomeBonusRows.data ?? null) as Array<{
+        amount: number | string | null;
+      }> | null;
+
       // Group the 10% bonuses by the referred user they came from. Rows that
       // predate transactions.referred_user_id are unlinked; they still count
       // toward the Referral Bonus total (the migration backfills the
@@ -1264,8 +1276,10 @@ function DashboardContent() {
 
       setSummary({
         adReward: round2(sumAmounts(adRows.data)),
-        // Lifetime Referral Bonus = referral_bonus + welcome_bonus, completed only.
-        referralBonus: round2(sumAmounts(referralBonuses) + sumAmounts(welcomeBonusRows.data)),
+        // Referral Bonus is 10% referral commission only.
+        referralBonus: round2(sumAmounts(referralBonuses)),
+        // The $2 KYC welcome bonus is its own lifetime total.
+        welcomeBonus: round2(sumAmounts(welcomeBonusRowsData)),
         dailyProfit: dailyProfitTotal,
         totalWithdrawn: sumAmounts(withdrawals),
         totalDeposited,
@@ -1511,6 +1525,7 @@ function DashboardContent() {
   const totalDailyProfit = summary.dailyProfit;
   const totalAdsReward = summary.adReward;
   const totalReferralBonus = summary.referralBonus;
+  const totalWelcomeBonus = summary.welcomeBonus;
 
   // Top-card derived values.
   // profiles is the source of truth for the plan window: deposit approvals, the
@@ -1981,6 +1996,18 @@ function DashboardContent() {
                       }
                     >
                       {totalReferralBonus > 0 ? `+${money(totalReferralBonus)}` : money(0)}
+                    </dd>
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <dt className="text-muted-foreground">Welcome Bonus</dt>
+                    <dd
+                      className={
+                        totalWelcomeBonus > 0
+                          ? "font-semibold text-emerald-400"
+                          : "font-semibold text-muted-foreground"
+                      }
+                    >
+                      {totalWelcomeBonus > 0 ? `+${money(totalWelcomeBonus)}` : money(0)}
                     </dd>
                   </div>
                 </dl>

@@ -55,6 +55,14 @@ type AdminUser = {
   created_at: string;
 };
 
+type AdminConfirm = {
+  title: string;
+  message: string;
+  confirmLabel: string;
+  tone?: "danger";
+  onConfirm: () => void | Promise<void>;
+};
+
 type SupportTicket = {
   id: string;
   user_id: string | null;
@@ -546,6 +554,8 @@ function AdminContent() {
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [busyUserId, setBusyUserId] = useState<string | null>(null);
+  // Paying/destructive actions ask for confirmation before they touch money.
+  const [confirmAction, setConfirmAction] = useState<AdminConfirm | null>(null);
   const [userSearch, setUserSearch] = useState("");
   const [planUser, setPlanUser] = useState<AdminUser | null>(null);
   const [planPick, setPlanPick] = useState<string>("none");
@@ -586,8 +596,10 @@ function AdminContent() {
   const [annType, setAnnType] = useState("info");
   const [annBusy, setAnnBusy] = useState(false);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  // Reloads every tab's data. `silent` keeps the current tables on screen while
+  // the refetch runs, so a decision no longer blanks the panel behind a spinner.
+  const load = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
     try {
       // profiles has no email column, so nothing here selects or embeds it
       // (that used to raise PGRST204 / PGRST200). Emails are resolved from
@@ -656,7 +668,7 @@ function AdminContent() {
       console.error("[admin] load failed:", err);
       toast.error(msg);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, []);
 
@@ -801,6 +813,7 @@ function AdminContent() {
       } else toast.success("Deposit approved.");
       setDeposits((d) => d.filter((t) => t.id !== tx.id));
       void refreshAggregates();
+      void load(true);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Couldn't approve deposit.");
     } finally {
@@ -816,6 +829,7 @@ function AdminContent() {
       setDeposits((d) => d.filter((t) => t.id !== tx.id));
       toast.success("Deposit rejected.");
       void refreshAggregates();
+      void load(true);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Couldn't reject deposit.");
     } finally {
@@ -832,6 +846,7 @@ function AdminContent() {
       void sendWithdrawalPush(tx.user_id, "approved", Math.abs(Number(tx.amount)));
       toast.success("Withdrawal completed.");
       void refreshAggregates();
+      void load(true);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Couldn't approve withdrawal.");
     } finally {
@@ -851,17 +866,22 @@ function AdminContent() {
       if (uErr) throw uErr;
       if (!up) throw new Error("User profile not found.");
       const toExtra = (tx.plan_name ?? "").toLowerCase().includes("extra");
-      const patch = toExtra
+      const balancePatch = toExtra
         ? { extra_balance: Math.round((Number(up.extra_balance ?? 0) + refund) * 100) / 100 }
         : { main_balance: Math.round((Number(up.main_balance ?? 0) + refund) * 100) / 100 };
+      // Rejecting refunds the money AND clears the 7-day cooldown: the request
+      // never left the platform, so the user must be able to ask again at once.
+      const patch = { ...balancePatch, last_withdraw_at: null };
       const { error: bErr } = await supabase.from("profiles").update(patch).eq("id", tx.user_id);
       if (bErr) throw bErr;
       const { error: tErr } = await supabase.from("transactions").update({ status: "rejected" }).eq("id", tx.id);
       if (tErr) throw tErr;
       setWithdrawals((w) => w.filter((t) => t.id !== tx.id));
+      patchUser(tx.user_id, { last_withdraw_at: null });
       void sendWithdrawalPush(tx.user_id, "rejected", refund);
       toast.success(`Rejected. ${money(refund)} refunded.`);
       void refreshAggregates();
+      void load(true);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Couldn't reject withdrawal.");
     } finally {
@@ -1379,8 +1399,8 @@ const openPlanModal = (user: AdminUser) => {
                         <td className="px-4 py-3 font-mono text-xs" title={tx.tx_hash ?? ""}>{short(tx.tx_hash, 22)}</td>
                         <td className="px-4 py-3">{tx.network ?? "—"}</td>
                         <td className="px-4 py-3"><div className="flex justify-end gap-2">
-                          <button type="button" disabled={busyId === tx.id} onClick={() => void approveDeposit(tx)} className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-emerald-500 disabled:opacity-50">{busyId === tx.id ? "…" : "Approve"}</button>
-                          <button type="button" disabled={busyId === tx.id} onClick={() => void rejectDeposit(tx)} className="rounded-lg bg-destructive/90 px-3 py-1.5 text-xs font-bold text-white hover:bg-destructive disabled:opacity-50">Reject</button>
+                          <button type="button" disabled={busyId === tx.id} onClick={() => setConfirmAction({ title: "Approve this deposit?", message: `This credits ${money(Number(tx.deposit_amount ?? tx.amount))} on ${tx.plan_name ?? "the selected plan"}, activates the plan and pays any 10% referral bonus.`, confirmLabel: "Yes, approve deposit", onConfirm: () => approveDeposit(tx) })} className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-emerald-500 disabled:opacity-50">{busyId === tx.id ? "…" : "Approve"}</button>
+                          <button type="button" disabled={busyId === tx.id} onClick={() => setConfirmAction({ title: "Reject this deposit?", message: `The ${money(Number(tx.deposit_amount ?? tx.amount))} deposit will be marked rejected. The user is not credited.`, confirmLabel: "Yes, reject deposit", tone: "danger", onConfirm: () => rejectDeposit(tx) })} className="rounded-lg bg-destructive/90 px-3 py-1.5 text-xs font-bold text-white hover:bg-destructive disabled:opacity-50">Reject</button>
                         </div></td>
                       </tr>
                     ))}
@@ -1481,8 +1501,8 @@ const openPlanModal = (user: AdminUser) => {
                         <td className="px-4 py-3 font-semibold text-primary">{money(Math.abs(Number(tx.amount)))}</td>
                         <td className="max-w-[260px] truncate px-4 py-3 font-mono text-xs" title={tx.wallet_address ?? ""}>{tx.wallet_address ?? "—"}</td>
                         <td className="px-4 py-3"><div className="flex justify-end gap-2">
-                          <button type="button" disabled={busyId === tx.id} onClick={() => void approveWithdrawal(tx)} className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-emerald-500 disabled:opacity-50">{busyId === tx.id ? "…" : "Approve"}</button>
-                          <button type="button" disabled={busyId === tx.id} onClick={() => void rejectWithdrawal(tx)} className="rounded-lg bg-destructive/90 px-3 py-1.5 text-xs font-bold text-white hover:bg-destructive disabled:opacity-50">Reject + Refund</button>
+                          <button type="button" disabled={busyId === tx.id} onClick={() => setConfirmAction({ title: "Approve this withdrawal?", message: `This marks ${money(Math.abs(Number(tx.deposit_amount ?? tx.amount)))} as paid out. Make sure the transfer to ${tx.wallet_address ?? "the user's wallet"} was sent.`, confirmLabel: "Yes, approve withdrawal", onConfirm: () => approveWithdrawal(tx) })} className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-emerald-500 disabled:opacity-50">{busyId === tx.id ? "…" : "Approve"}</button>
+                          <button type="button" disabled={busyId === tx.id} onClick={() => setConfirmAction({ title: "Reject this withdrawal?", message: `The ${money(Math.abs(Number(tx.amount)))} will be refunded and the user's 7-day cooldown cleared.`, confirmLabel: "Yes, reject + refund", tone: "danger", onConfirm: () => rejectWithdrawal(tx) })} className="rounded-lg bg-destructive/90 px-3 py-1.5 text-xs font-bold text-white hover:bg-destructive disabled:opacity-50">Reject + Refund</button>
                         </div></td>
                       </tr>
                     ))}
@@ -1814,6 +1834,52 @@ const openPlanModal = (user: AdminUser) => {
         )}
 
       </main>
+
+      {/* Plain-state confirmation dialog: approving or rejecting moves real money,
+          so nothing runs until the admin confirms it here. */}
+      {confirmAction && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+          onClick={() => setConfirmAction(null)}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="admin-confirm-title"
+            className="w-full max-w-sm rounded-2xl border border-border bg-card p-6 shadow-glow"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 id="admin-confirm-title" className="font-display text-lg font-bold">
+              {confirmAction.title}
+            </h2>
+            <p className="mt-2 text-sm text-muted-foreground">{confirmAction.message}</p>
+            <div className="mt-6 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setConfirmAction(null)}
+                className="rounded-lg border border-border px-4 py-2 text-sm font-semibold text-muted-foreground hover:text-foreground"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const action = confirmAction;
+                  setConfirmAction(null);
+                  void action.onConfirm();
+                }}
+                className={
+                  confirmAction.tone === "danger"
+                    ? "rounded-lg bg-destructive px-4 py-2 text-sm font-bold text-white hover:bg-destructive/90"
+                    : "rounded-lg bg-brand px-4 py-2 text-sm font-bold text-primary-foreground shadow-glow"
+                }
+              >
+                {confirmAction.confirmLabel}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );

@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { useNavigate, useRouterState } from "@tanstack/react-router";
 import { useAuth } from "@/components/AuthProvider";
 import { supabase } from "@/integrations/supabase/client";
+import { loginRedirectSearch } from "@/lib/auth-redirect";
 
 export function RequireAdmin({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
@@ -13,11 +14,11 @@ export function RequireAdmin({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (authLoading) return;
     if (!user) {
-      navigate({
-        to: "/login",
-        search: { redirect: `${location.pathname}${location.searchStr}` },
-        replace: true,
-      });
+      // Already on /login (or the guard ran twice): do not navigate again, or
+      // the `redirect` value becomes /login itself and nests forever.
+      const search = loginRedirectSearch(location.pathname, location.searchStr);
+      if (!search.redirect) return;
+      navigate({ to: "/login", search, replace: true });
       return;
     }
     let active = true;

@@ -227,6 +227,20 @@ const hoisted = vi.hoisted(() => {
       status: string;
       created_at: string;
     }[],
+    // Pending withdrawals rendered on the Withdrawals tab.
+    pendingWithdrawals: [] as {
+      id: string;
+      user_id: string;
+      type: string;
+      amount: number;
+      deposit_amount: number | null;
+      plan_name: string | null;
+      network: string | null;
+      wallet_address: string | null;
+      tx_hash: string | null;
+      status: string;
+      created_at: string;
+    }[],
     // supabase.functions.invoke — the send-push call under test.
     pushInvoke: vi.fn(() => Promise.resolve({ data: { ok: true }, error: null })),
   };
@@ -311,6 +325,13 @@ vi.mock("@/integrations/supabase/client", () => {
             onRejected,
           );
         }
+        // Pending withdrawals queue (`type=withdrawal`, `status=pending`).
+        if (table === "transactions" && state.type === "withdrawal") {
+          return Promise.resolve({ data: hoisted.pendingWithdrawals, error: null }).then(
+            onFulfilled,
+            onRejected,
+          );
+        }
         // The All Transactions tab asks for the latest 100 rows with no filter.
         if (
           table === "transactions" &&
@@ -340,6 +361,10 @@ vi.mock("@/integrations/supabase/client", () => {
     }
     if (table === "profiles" && cols === "is_admin") {
       return { data: { is_admin: hoisted.isAdmin }, error: null };
+    }
+    if (table === "profiles" && cols === "id,main_balance,extra_balance") {
+      // The withdrawal rejection reads the row before refunding it.
+      return { data: hoisted.profiles.find((p) => p.id === "user-1") ?? null, error: null };
     }
     if (table === "profiles" && cols === "referred_by") {
       return { data: hoisted.fallbackReferrals, error: null };
@@ -821,6 +846,8 @@ describe("Admin deposit approval push", () => {
     render(<Admin />);
     fireEvent.click(await screen.findByRole("button", { name: /Pending Deposits/ }));
     fireEvent.click(await screen.findByRole("button", { name: "Approve" }));
+    // Approving now asks for confirmation before it moves money.
+    fireEvent.click(await screen.findByRole("button", { name: "Yes, approve deposit" }));
   }
 
   const depositCompleted = () =>
@@ -879,5 +906,72 @@ describe("Admin deposit approval push", () => {
     await waitFor(() => expect(toast.success).toHaveBeenCalled());
     expect(depositCompleted()).toBe(true);
     expect(toast.error).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Rejecting a withdrawal refunds the balance AND clears `last_withdraw_at`.
+ * Leaving the timestamp set locked the user out for 7 days on a request that
+ * never paid out, and the row actions used to run with no confirmation at all.
+ */
+describe("Admin withdrawal rejection", () => {
+  const pendingWithdrawal = () => ({
+    id: "wd-1",
+    user_id: "user-1",
+    type: "withdrawal",
+    amount: -50,
+    deposit_amount: null,
+    plan_name: "Withdraw to BEP20",
+    network: "BEP20",
+    wallet_address: "0xabc",
+    tx_hash: "wd-1",
+    status: "pending",
+    created_at: "2026-02-06T00:00:00.000Z",
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    hoisted.updates.length = 0;
+    hoisted.isAdmin = true;
+    hoisted.affectedRows = true;
+    hoisted.primaryEmailError = null;
+    hoisted.aggregateRpcError = false;
+    hoisted.pendingWithdrawals.length = 0;
+    hoisted.pendingWithdrawals.push(pendingWithdrawal());
+  });
+
+  it("asks for confirmation before rejecting", async () => {
+    render(<Admin />);
+    fireEvent.click(await screen.findByRole("button", { name: /Pending Withdrawals/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Reject + Refund" }));
+
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+    // Nothing is written until the modal is confirmed.
+    expect(hoisted.updates).toHaveLength(0);
+  });
+
+  it("refunds the balance and clears the 7-day cooldown", async () => {
+    render(<Admin />);
+    fireEvent.click(await screen.findByRole("button", { name: /Pending Withdrawals/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Reject + Refund" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Yes, reject + refund" }));
+
+    await waitFor(() =>
+      expect(
+        hoisted.updates.some(
+          (update) => update.table === "profiles" && update.payload["last_withdraw_at"] === null,
+        ),
+      ).toBe(true),
+    );
+
+    const profileUpdate = hoisted.updates.find((update) => update.table === "profiles");
+    // 125.50 main + 50 refund, and the cooldown cleared in the same write.
+    expect(profileUpdate?.payload).toMatchObject({ main_balance: 175.5, last_withdraw_at: null });
+    expect(
+      hoisted.updates.some(
+        (update) => update.table === "transactions" && update.payload["status"] === "rejected",
+      ),
+    ).toBe(true);
+    await waitFor(() => expect(toast.success).toHaveBeenCalled());
   });
 });

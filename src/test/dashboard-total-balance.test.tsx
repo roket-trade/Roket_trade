@@ -174,8 +174,12 @@ describe("Dashboard Total Balance card", () => {
     expect(within(card).getByText("Lifetime")).toBeInTheDocument();
     expect(within(card).getByText(/^\+\$150\.00/)).toBeInTheDocument();
     expect(within(card).getByText("+$7.50")).toBeInTheDocument();
-    // referral_bonus (20) + welcome_bonus (2.50)
-    expect(within(card).getByText("+$22.50")).toBeInTheDocument();
+    // Referral Bonus is referral_bonus (20) only — never the welcome bonus.
+    expect(within(card).getByText("+$20.00")).toBeInTheDocument();
+    // The $2.50 KYC bonus gets its own row instead of hiding under "Referral Bonus".
+    expect(within(card).getByText("Welcome Bonus")).toBeInTheDocument();
+    expect(within(card).getByText("+$2.50")).toBeInTheDocument();
+    expect(within(card).queryByText("+$22.50")).toBeNull();
 
     expect(within(card).queryByText(/999/)).toBeNull();
     expect(within(card).queryByText(/500/)).toBeNull();

@@ -66,6 +66,8 @@ function Checkout() {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState(false);
+  // Validated TxID waiting for the "did you really send it?" confirmation.
+  const [confirmTx, setConfirmTx] = useState<string | null>(null);
   // Set when the signed-in user already owns this plan (or a better one). The
   // page redirects to the dashboard; this state keeps the checkout form closed
   // in case the redirect cannot happen.
@@ -117,16 +119,27 @@ function Checkout() {
     }
   };
 
-  const submit = async (e: React.FormEvent) => {
+  const submit = (e: React.FormEvent) => {
     e.preventDefault();
     if (planBlocked) {
       toast.error("This plan isn't available to you — choose a higher plan.");
       return;
     }
     const parsed = txSchema.safeParse(tx);
-    if (!parsed.success)
-      return setError(parsed.error.issues[0]?.message ?? "Invalid transaction hash");
+    if (!parsed.success) {
+      setError(parsed.error.issues[0]?.message ?? "Invalid transaction hash");
+      return;
+    }
     setError("");
+    // Nothing is written until the modal below is confirmed — a TxID sent by
+    // mistake creates a pending deposit that has to be cleaned up by hand.
+    setConfirmTx(parsed.data);
+  };
+
+  const confirmSubmit = async () => {
+    const txHashInput = confirmTx;
+    if (txHashInput === null) return;
+    setConfirmTx(null);
     setBusy(true);
 
     try {
@@ -149,7 +162,7 @@ function Checkout() {
       const amount = parseFloat(String(plan.deposit));
       // EVM transaction hashes are case-insensitive; Solana signatures are not.
       // Normalise BEP20 hashes so the unique index blocks replay attempts.
-      const txHash = net === "BEP20" ? parsed.data.toLowerCase() : parsed.data;
+      const txHash = net === "BEP20" ? txHashInput.toLowerCase() : txHashInput;
       const payload = {
         user_id: userId,
         type: "deposit",
@@ -346,6 +359,61 @@ function Checkout() {
                 </button>
               </form>
             </section>
+          )}
+
+          {/* Confirmation gate: the deposit row is only created once the user
+              confirms they actually sent the exact amount to this address. */}
+          {confirmTx !== null && (
+            <div
+              className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+              onClick={() => setConfirmTx(null)}
+            >
+              <div
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="checkout-confirm-title"
+                className="w-full max-w-sm rounded-2xl border bg-card p-6 shadow-glow"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <h2 id="checkout-confirm-title" className="font-display text-lg font-bold">
+                  Are you sure you have sent the exact amount to this address?
+                </h2>
+                <dl className="mt-4 space-y-2 text-sm">
+                  <div className="flex items-baseline justify-between gap-3">
+                    <dt className="text-muted-foreground">Amount</dt>
+                    <dd className="font-bold text-brand">{money(plan.deposit)} USDT</dd>
+                  </div>
+                  <div className="flex items-baseline justify-between gap-3">
+                    <dt className="text-muted-foreground">Network</dt>
+                    <dd className="font-semibold">{NETWORKS[net].label}</dd>
+                  </div>
+                </dl>
+                <p className="mt-3 break-all rounded-lg border bg-muted px-3 py-2 font-mono text-xs">
+                  {address}
+                </p>
+                <p className="mt-3 text-xs text-muted-foreground">
+                  Deposits are reviewed before your plan activates. A wrong amount or network cannot
+                  be verified automatically.
+                </p>
+                <div className="mt-6 flex justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setConfirmTx(null)}
+                    className="rounded-lg border px-4 py-2 text-sm font-semibold text-muted-foreground hover:text-foreground"
+                  >
+                    Go back
+                  </button>
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => void confirmSubmit()}
+                    className="rounded-lg bg-brand px-4 py-2 text-sm font-bold text-primary-foreground shadow-glow disabled:opacity-60"
+                  >
+                    Yes, I sent it
+                  </button>
+                </div>
+              </div>
+            </div>
           )}
         </div>
       </div>

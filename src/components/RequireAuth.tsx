@@ -1,6 +1,7 @@
 import { useEffect, type ReactNode } from "react";
 import { useNavigate, useRouterState } from "@tanstack/react-router";
 import { useAuth } from "@/components/AuthProvider";
+import { loginRedirectSearch } from "@/lib/auth-redirect";
 
 export function RequireAuth({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
@@ -9,13 +10,11 @@ export function RequireAuth({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (loading || user) return;
-    // Prevent redirect loop: if already on /login, do not redirect again.
-    if (location.pathname === "/login") return;
-    navigate({
-      to: "/login",
-      search: { redirect: `${location.pathname}${location.searchStr}` },
-      replace: true,
-    });
+    // Already on /login: redirecting again is what nested the param into
+    // /login?redirect=%2Flogin%3Fredirect%3D…, so stay put instead.
+    const search = loginRedirectSearch(location.pathname, location.searchStr);
+    if (!search.redirect) return;
+    navigate({ to: "/login", search, replace: true });
   }, [loading, user, location.pathname, location.searchStr, navigate]);
 
   if (loading || !user) {

@@ -83,6 +83,21 @@ describe("landing pricing respects the current plan", () => {
     expect(within(planCard("Plan 2")).queryByRole("link")).toBeNull();
   });
 
+  it("never flashes Choose Plan while the owned plan is still loading", async () => {
+    render(<Index />);
+
+    // First paint, before the plan read resolves: a skeleton, not an enabled
+    // "Choose Plan" that turns into "Current Plan" a beat later.
+    expect(within(planCard("Plan 2")).queryByRole("link")).toBeNull();
+    expect(within(planCard("Plan 2")).getByTestId("plan-loading-2")).toBeInTheDocument();
+    expect(within(planCard("Plan 2")).queryByRole("button")).toBeNull();
+
+    await waitFor(() =>
+      expect(within(planCard("Plan 2")).getByText("Current Plan")).toBeInTheDocument(),
+    );
+    expect(within(planCard("Plan 2")).queryByTestId("plan-loading-2")).toBeNull();
+  });
+
   it("keeps higher plans purchasable", async () => {
     render(<Index />);
 

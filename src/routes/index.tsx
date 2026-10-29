@@ -84,26 +84,38 @@ function Check() {
 }
 
 function Index() {
-  const { user } = useAuth();
+  const { user, loading: authLoading } = useAuth();
   // Rank of the plan the user already owns (1-4). null = nothing to restrict.
   const [currentPlan, setCurrentPlan] = useState<number | null>(null);
+  // The plan read is async, so the buttons wait for it. Rendering them earlier
+  // flashed an enabled "Choose Plan" on the plan the user already owns — the
+  // effect below runs after the first paint, so the initial value must already
+  // say "loading" when a user is present.
+  const [planLoading, setPlanLoading] = useState(Boolean(user?.id));
 
   useEffect(() => {
     let active = true;
 
     if (!user?.id) {
       setCurrentPlan(null);
+      setPlanLoading(false);
       return;
     }
 
+    setPlanLoading(true);
     void fetchCurrentPlanIndex(user.id).then((rank) => {
-      if (active) setCurrentPlan(rank);
+      if (!active) return;
+      setCurrentPlan(rank);
+      setPlanLoading(false);
     });
 
     return () => {
       active = false;
     };
   }, [user?.id]);
+
+  // Auth + plan both have to settle before a plan button can be trusted.
+  const planPending = authLoading || planLoading;
 
   return (
     <div className="min-h-screen">
@@ -210,7 +222,15 @@ function Index() {
                   ))}
                 </ul>
 
-                {canChoose ? (
+                {planPending ? (
+                  // Skeleton until the plan rank is known — never an enabled
+                  // "Choose Plan" that turns into "Current Plan" a beat later.
+                  <div
+                    data-testid={`plan-loading-${rank}`}
+                    aria-hidden="true"
+                    className="mt-auto h-[46px] w-full animate-pulse rounded-lg border border-border bg-muted"
+                  />
+                ) : canChoose ? (
                   <Link to="/checkout" search={{ plan: rank }} className={`${cta} mt-auto w-full`}>
                     Choose Plan
                   </Link>

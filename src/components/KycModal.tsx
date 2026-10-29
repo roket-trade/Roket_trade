@@ -149,7 +149,7 @@ export function KycModal({
             type: "welcome_bonus",
             amount: 2,
             status: "completed",
-            description: "Welcome Bonus for completing KYC",
+            description: "Welcome Bonus",
           });
           if (bonusTxError) throw bonusTxError;
 
