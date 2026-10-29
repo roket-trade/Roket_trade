@@ -1656,7 +1656,7 @@ function DashboardContent() {
         ),
       );
       console.log("[withdrawal] submitted", {
-        amount: optimisticAmount,
+        amount,
         pendingRows,
         pendingError,
         pendingTotal,
