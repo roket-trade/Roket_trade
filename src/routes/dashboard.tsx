@@ -1225,10 +1225,9 @@ function DashboardContent() {
       // the balance math is visible in the console the moment it is committed.
       const debugTotalBalance =
         Number(data.main_balance ?? 0) + Number(data.extra_balance ?? 0);
-      const debugAvailableWithdrawal = Math.max(
-        0,
-        debugTotalBalance - totalDeposited - effectivePendingWithdrawals,
-      );
+      // Available is the balance itself: deposits never credit it, and a pending
+      // request is already out of main_balance, so nothing is subtracted here.
+      const debugAvailableWithdrawal = Math.max(0, debugTotalBalance);
 
       console.log("DEBUG MATH:", {
         totalBalance: debugTotalBalance,
@@ -1243,8 +1242,8 @@ function DashboardContent() {
         dailyProfit: dailyProfitTotal,
         totalWithdrawn: sumAmounts(withdrawals),
         totalDeposited,
-        // The UI state the Available Balance card derives from: total earnings
-        // minus deposits minus every pending request (see availableWithdrawal).
+        // Pending requests are already debited from main_balance; kept here for
+        // diagnostics only (see availableWithdrawal).
         totalPendingWithdrawals: effectivePendingWithdrawals,
         latestWithdraw: withdrawals[0]
           ? {
@@ -1467,10 +1466,10 @@ function DashboardContent() {
   };
 
   const totalBalance = mainBalance + extraBalance;
-  // A user may only withdraw profits: total earnings (Main + Extra) minus the
-  // total amount they have deposited and minus any pending withdrawal requests.
-  // This drops the available balance immediately when a request is made,
-  // preventing multiple pending requests that exceed the actual balance.
+  // Available to withdraw is exactly the balance: main_balance + extra_balance.
+  // Deposits are money spent on a plan and are never credited back, and a pending
+  // request is debited from main_balance the moment it is created — so neither
+  // deposits nor pending rows may be subtracted here a second time.
   const availableWithdrawal = totalBalance;
 
   // Total Balance card shows money EARNED only — never deposits. Main is the
@@ -1660,10 +1659,9 @@ function DashboardContent() {
         pendingRows,
         pendingError,
         pendingTotal,
-        // What the Available Balance card will show on the next render.
-        expectedAvailable: round2(
-          Math.max(0, totalBalance - summary.totalDeposited - pendingTotal),
-        ),
+        // What the Available Balance card will show on the next render: the
+        // balance itself, because the request is already out of main_balance.
+        expectedAvailable: round2(Math.max(0, totalBalance)),
       });
     } catch (err) {
       if (!inserted) {

@@ -34,8 +34,13 @@ const { mockUser, mockProfile, state } = vi.hoisted(() => {
   return {
     mockUser: user,
     mockProfile: profile,
-    // Rows the dashboard wrote during the test, so a later fetch sees them.
-    state: { inserted: [] as Array<Record<string, unknown>>, pendingError: false },
+    // Rows the dashboard wrote during the test, so a later fetch sees them, plus
+    // the balance the dashboard persists when it debits a withdrawal request.
+    state: {
+      inserted: [] as Array<Record<string, unknown>>,
+      pendingError: false,
+      mainBalance: profile.main_balance,
+    },
   };
 });
 
@@ -87,14 +92,25 @@ vi.mock("@/integrations/supabase/client", () => {
         state.inserted.push(payload);
         return query;
       },
-      update: () => {
+      update: (payload: Record<string, unknown>) => {
         mode = "update";
+        // Model the profiles write: the request debits main_balance immediately,
+        // so a later read (or reload) must see the reduced figure.
+        if (table === "profiles" && payload["main_balance"] !== undefined) {
+          state.mainBalance = Number(payload["main_balance"]);
+        }
         return query;
       },
       single: () =>
-        Promise.resolve({ data: table === "profiles" ? mockProfile : null, error: null }),
+        Promise.resolve({
+          data: table === "profiles" ? { ...mockProfile, main_balance: state.mainBalance } : null,
+          error: null,
+        }),
       maybeSingle: () =>
-        Promise.resolve({ data: table === "profiles" ? mockProfile : null, error: null }),
+        Promise.resolve({
+          data: table === "profiles" ? { ...mockProfile, main_balance: state.mainBalance } : null,
+          error: null,
+        }),
       then: (resolve: (value: unknown) => unknown) => {
         if (mode === "insert" || mode === "update") {
           return Promise.resolve({ data: null, error: null }).then(resolve);
@@ -183,6 +199,7 @@ afterEach(() => {
   cleanup();
   state.inserted.length = 0;
   state.pendingError = false;
+  state.mainBalance = mockProfile.main_balance;
   vi.restoreAllMocks();
 });
 
@@ -191,14 +208,16 @@ describe("Dashboard withdrawal submission", () => {
     render(<DashboardPage />);
 
     const card = await withdrawCard();
-    expect(await card.findByText("$90.00")).toBeInTheDocument();
+    // Available Balance is main_balance + extra_balance: 250 + 20. Deposits are
+    // spent on plans and never count towards it.
+    expect(await card.findByText("$270.00")).toBeInTheDocument();
 
     await submitWithdrawal("50");
 
-    // The balance must move without a page reload: 90 - 50 = 40.
+    // The request debits main_balance at once: (250 - 50) + 20 = 220.
     await waitFor(async () => {
       const next = await withdrawCard();
-      expect(next.getByText("$40.00")).toBeInTheDocument();
+      expect(next.getByText("$220.00")).toBeInTheDocument();
     });
     expect(state.inserted).toHaveLength(1);
   });
@@ -230,9 +249,9 @@ describe("Dashboard withdrawal submission", () => {
 });
 
 /**
- * A pending request is money the user already committed: every page load has to
- * keep it out of Available Balance. These cases model a reload, where the
- * dashboard has no in-memory state to lean on and must trust the database read.
+ * A pending request is already debited from main_balance when it is created, so
+ * every page load must render main_balance + extra_balance as-is. Subtracting
+ * the stored pending row again would charge the user twice for one request.
  */
 describe("Dashboard pending withdrawals on load", () => {
   const pendingRow = (amount: number) => ({
@@ -242,34 +261,34 @@ describe("Dashboard pending withdrawals on load", () => {
     created_at: "2026-02-05T09:00:00.000Z",
   });
 
-  it("keeps the reduced balance when a pending request is already stored", async () => {
+  it("does not subtract a stored pending request a second time", async () => {
     state.inserted.push(pendingRow(-50));
 
     render(<DashboardPage />);
 
     const card = await withdrawCard();
-    // 270 in the wallet - 180 deposited - 50 pending = 40.
-    expect(await card.findByText("$40.00")).toBeInTheDocument();
+    // 250 main + 20 extra. The 50 is already out of main_balance.
+    expect(await card.findByText("$270.00")).toBeInTheDocument();
   });
 
-  it("subtracts the absolute value even when the pending row has no sign", async () => {
+  it("ignores the sign on a pending row so it is never double counted", async () => {
     state.inserted.push(pendingRow(50));
 
     render(<DashboardPage />);
 
     const card = await withdrawCard();
-    expect(await card.findByText("$40.00")).toBeInTheDocument();
+    expect(await card.findByText("$270.00")).toBeInTheDocument();
   });
 
-  it("falls back to the recent-withdrawals read when the pending query is denied", async () => {
+  it("keeps the balance when the pending query is denied", async () => {
     state.inserted.push(pendingRow(-50));
     state.pendingError = true;
 
     render(<DashboardPage />);
 
     const card = await withdrawCard();
-    // The filtered read failed, but the same row is visible in the unfiltered
-    // recent-withdrawals list, so the balance still drops by 50.
-    expect(await card.findByText("$40.00")).toBeInTheDocument();
+    // The filtered read failed, but the profile is the source of truth, so a
+    // permission error must not move (or hide) the balance.
+    expect(await card.findByText("$270.00")).toBeInTheDocument();
   });
 });

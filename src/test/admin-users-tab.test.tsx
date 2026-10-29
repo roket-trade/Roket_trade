@@ -438,29 +438,34 @@ describe("Admin user management tab", () => {
     hoisted.aggregateRpcError = false;
   });
 
-  it("shows earned totals, available balance and referrals — never deposit balances", async () => {
+  it("shows one Balance column, referrals and never a deposit amount", async () => {
     await openUsersTab();
 
     expect(await screen.findByText("alice@example.com")).toBeInTheDocument();
     expect(screen.getByText("Alice Able")).toBeInTheDocument();
-    expect(screen.getByRole("columnheader", { name: "Total Earned" })).toBeInTheDocument();
-    expect(screen.getByRole("columnheader", { name: "Available Balance" })).toBeInTheDocument();
+    // A single Balance column: main_balance + extra_balance is the source of truth.
+    expect(screen.getByRole("columnheader", { name: "Balance" })).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "Referrals" })).toBeInTheDocument();
+    // The old split earned / available columns are gone.
+    expect(screen.queryByRole("columnheader", { name: "Total Earned" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("columnheader", { name: "Available Balance" }),
+    ).not.toBeInTheDocument();
     expect(screen.queryByRole("columnheader", { name: "Main Balance" })).not.toBeInTheDocument();
     expect(screen.queryByRole("columnheader", { name: "Extra Balance" })).not.toBeInTheDocument();
 
     const alice = rowFor("alice@example.com");
-    expect(within(alice).getByText("$240.00")).toBeInTheDocument();
+    // 125.50 main + 10.00 extra.
+    expect(within(alice).getByText("$135.50")).toBeInTheDocument();
+    // The transaction aggregate is still rendered next to it.
     expect(within(alice).getByText("$200.00")).toBeInTheDocument();
     expect(within(alice).getByText("2")).toBeInTheDocument();
     expect(within(alice).getByText("Plan 2")).toBeInTheDocument();
     expect(within(alice).getByText("Active")).toBeInTheDocument();
     expect(within(rowFor("bob@example.com")).getByText("Held")).toBeInTheDocument();
 
-    // The stored profile balances used to print here; a deposit must never
-    // look like an editable balance again.
-    expect(screen.queryByText("$125.50")).not.toBeInTheDocument();
-    expect(screen.queryByText("$10.00")).not.toBeInTheDocument();
+    // A deposit is never shown as (or editable as) a balance again.
+    expect(screen.queryByText("$500.00")).not.toBeInTheDocument();
   });
 
   it("filters users by email or name", async () => {
@@ -514,33 +519,31 @@ describe("Admin user management tab", () => {
     expect(within(dialog).getByText("pending")).toBeInTheDocument();
   });
 
-  it("edits Total Earned / Available Balance only — no deposit or main balance field", async () => {
+  it("edits the single Balance field and folds the difference into main_balance", async () => {
     await openUsersTab();
     openActions("alice@example.com");
     fireEvent.click(screen.getByRole("button", { name: "Edit Balances & KYC" }));
 
     const dialog = await screen.findByRole("dialog");
-    const earned = within(dialog).getByLabelText("Total Earned") as HTMLInputElement;
-    const available = within(dialog).getByLabelText("Available Balance") as HTMLInputElement;
+    const balance = within(dialog).getByLabelText("Balance") as HTMLInputElement;
 
-    expect(earned.value).toBe("240");
-    expect(available.value).toBe("200");
-    expect(within(dialog).queryByLabelText(/main balance/i)).not.toBeInTheDocument();
+    // The field starts at main_balance + extra_balance: 125.50 + 10.00.
+    expect(balance.value).toBe("135.5");
+    expect(within(dialog).queryByLabelText(/total earned/i)).not.toBeInTheDocument();
+    expect(within(dialog).queryByLabelText(/available balance/i)).not.toBeInTheDocument();
     expect(within(dialog).queryByLabelText(/extra balance/i)).not.toBeInTheDocument();
     expect(within(dialog).queryByLabelText(/deposit/i)).not.toBeInTheDocument();
 
-    // Available = Total Earned - withdrawn, so the two stay in sync while typing.
-    fireEvent.change(available, { target: { value: "275" } });
-    expect((within(dialog).getByLabelText("Total Earned") as HTMLInputElement).value).toBe("315");
+    fireEvent.change(balance, { target: { value: "275" } });
 
     fireEvent.click(within(dialog).getByRole("button", { name: "Save changes" }));
 
     await waitFor(() => expect(hoisted.updates).toHaveLength(1));
+    // Only main_balance moves, by the delta: 125.50 + (275 - 135.50).
     expect(hoisted.updates[0]).toMatchObject({
       table: "profiles",
       payload: {
-        earnings_adjustment: 75,
-        main_balance: 200.5,
+        main_balance: 265,
         is_admin: false,
         kyc_status: "verified",
       },
@@ -652,10 +655,12 @@ describe("Admin user management tab", () => {
     await openUsersTab();
 
     const alice = rowFor("alice@example.com");
-    // 300 daily profit + 20 referral bonus; the $500 deposit is ignored.
-    expect(await within(alice).findByText("$320.00")).toBeInTheDocument();
-    // 320 earned - 70 pending withdrawal; the rejected -30 is ignored.
+    // The Balance cell stays on the profile figures: 125.50 main + 10.00 extra.
+    expect(await within(alice).findByText("$135.50")).toBeInTheDocument();
+    // 300 daily profit + 20 referral bonus; the $500 deposit is ignored. The
+    // earned total survives in the aggregate cell's tooltip.
     expect(within(alice).getByText("$250.00")).toBeInTheDocument();
+    expect(within(alice).getByTitle(/Earned \$320\.00/)).toBeInTheDocument();
     expect(within(alice).getByText("2")).toBeInTheDocument();
     expect(screen.queryByText(/Earnings unavailable/)).not.toBeInTheDocument();
   });

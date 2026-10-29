@@ -1139,7 +1139,10 @@ const openPlanModal = (user: AdminUser) => {
   // --- Edit earnings & KYC ------------------------------------------------
   const openEditModal = (user: AdminUser) => {
     setEditDraft({
-      balance: String(round2(Number(user.main_balance ?? 0))),
+      // Same figure the table renders and saveEdits diffs against: the user's
+      // whole balance (main + extra). Seeding this with main_balance alone made
+      // an unchanged save silently shave extra_balance off main_balance.
+      balance: String(round2(Number(user.main_balance ?? 0) + Number(user.extra_balance ?? 0))),
       isAdmin: user.is_admin === true,
       kyc: user.kyc_status ?? "unverified",
     });

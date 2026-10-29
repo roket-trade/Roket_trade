@@ -16,8 +16,11 @@ const { mockUser, mockProfile, startDate } = vi.hoisted(() => ({
     id: "11111111-2222-3333-4444-555555555555",
     full_name: "Test Trader",
     created_at: "2024-01-01T00:00:00.000Z",
-    extra_balance: 20,
-    main_balance: 250,
+    // The profile is the single source of truth: main_balance is the sum of the
+    // daily_profit rows and extra_balance the ads + referral bonuses, so the card
+    // headline and its "Main / Extra" breakdown agree.
+    extra_balance: 12.15,
+    main_balance: 9.5,
     kyc_status: "verified",
     referral_code: "TEST1234",
     referred_by: null,
@@ -162,9 +165,11 @@ describe("Dashboard top summary cards", () => {
     expect(await screen.findByText("Total Balance")).toBeInTheDocument();
 
     // Card 1 — Total Balance is earned money only (daily profit + ads + referrals),
-    // never the user's deposit or wallet balance.
-    expect(screen.getByText("$21.65")).toBeInTheDocument();
-    expect(screen.getByText("Main $9.50 · Extra $12.15")).toBeInTheDocument();
+    // never the user's deposit or wallet balance. Under the single-source model
+    // that is exactly main_balance + extra_balance.
+    const totalCard = screen.getByText("Total Balance").closest("section") as HTMLElement;
+    expect(within(totalCard).getByText("$21.65")).toBeInTheDocument();
+    expect(within(totalCard).getByText("Main $9.50 · Extra $12.15")).toBeInTheDocument();
     expect(screen.getByText("+$9.50 ($4.50/day)")).toBeInTheDocument();
     expect(screen.getByText("+$0.15")).toBeInTheDocument();
     expect(screen.getByText("+$12.00")).toBeInTheDocument();
@@ -247,6 +252,13 @@ describe("Dashboard top summary cards", () => {
 
     expect(screen.getByRole("heading", { name: "Withdraw" })).toBeInTheDocument();
     expect(screen.getByText("Available Balance")).toBeInTheDocument();
+    // Available = main_balance + extra_balance. Deposits are already spent and a
+    // pending request has already been debited from main_balance, so neither is
+    // subtracted here.
+    const withdrawSection = screen
+      .getByRole("heading", { name: "Withdraw" })
+      .closest("section") as HTMLElement;
+    expect(within(withdrawSection).getByText("$21.65")).toBeInTheDocument();
     expect(screen.getByText("Latest 5 Withdrawals")).toBeInTheDocument();
     expect(screen.getByText("-$50.00")).toBeInTheDocument();
     expect(screen.getByText("One withdrawal every 7 days.")).toBeInTheDocument();
