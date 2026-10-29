@@ -247,11 +247,22 @@ describe("Dashboard top summary cards", () => {
     expect(screen.getByRole("button", { name: "Watch Ads" })).toBeInTheDocument();
     expect(screen.getByText("Latest 10 Rewards")).toBeInTheDocument();
     expect(screen.getByText("+$0.10")).toBeInTheDocument();
+    // The reward/referral lists grow with their 10 rows instead of scrolling
+    // inside a capped height.
+    const rewardList = within(adsCard).getByText("Latest 10 Rewards")
+      .nextElementSibling as HTMLElement;
+    expect(rewardList.tagName).toBe("UL");
+    expect(rewardList.className).not.toContain("overflow-y-auto");
+    expect(rewardList.className).not.toContain("max-h-");
 
     expect(screen.getByRole("heading", { name: "Referral" })).toBeInTheDocument();
     expect(screen.getByText("TEST1234")).toBeInTheDocument();
     expect(screen.getByText("Alice Referral")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Copy" })).toBeInTheDocument();
+    const referralList = screen.getByText("Latest 10 Referrals").nextElementSibling as HTMLElement;
+    expect(referralList.tagName).toBe("UL");
+    expect(referralList.className).not.toContain("overflow-y-auto");
+    expect(referralList.className).not.toContain("max-h-");
 
     expect(screen.getByRole("heading", { name: "Withdraw" })).toBeInTheDocument();
     expect(screen.getByText("Available Balance")).toBeInTheDocument();

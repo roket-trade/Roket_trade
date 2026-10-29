@@ -490,7 +490,7 @@ function AdsRewardCard({
         <p className="mt-5 text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
           Latest 10 Rewards
         </p>
-        <ul className="mt-2 max-h-[250px] divide-y divide-gray-800 overflow-y-auto">
+        <ul className="mt-2 divide-y divide-gray-800">
           {earnings.length === 0 ? (
             <li className="py-3 text-xs text-muted-foreground">
               No rewards yet — watch your first ad.
@@ -588,7 +588,7 @@ function ReferralCard({
       <p className="mt-5 text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
         Latest 10 Referrals
       </p>
-      <ul className="mt-2 max-h-[250px] divide-y divide-gray-800 overflow-y-auto">
+      <ul className="mt-2 divide-y divide-gray-800">
         {referrals.length === 0 ? (
           <li className="py-3 text-xs text-muted-foreground">No referrals yet.</li>
         ) : (
