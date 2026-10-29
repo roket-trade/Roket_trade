@@ -94,9 +94,15 @@ describe("Landing page", () => {
       "Watch Ads & Earn",
       "Secure Withdrawals",
       "24/7 Live Chat Support",
+      "Global Accessibility",
     ]) {
       expect(screen.getByRole("heading", { name: title })).toBeInTheDocument();
     }
+    expect(
+      screen.getByText(
+        "Access your dashboard and withdraw your profits from anywhere in the world, 24/7.",
+      ),
+    ).toBeInTheDocument();
     expect(screen.getByText(/Supports USDT BEP20 & Solana/)).toBeInTheDocument();
     expect(screen.getByText(/Exclusive to Plan 2 and above/)).toBeInTheDocument();
     expect(screen.getByText(/reviewed before payout/)).toBeInTheDocument();
@@ -115,8 +121,8 @@ describe("Landing page", () => {
 
     expect(steps).toEqual([
       "Create Account & Complete KYC",
-      "Deposit USDT",
       "Choose a Plan",
+      "Deposit USDT",
       "Earn Daily Profits & Refer",
       "Withdraw Your Profits",
     ]);

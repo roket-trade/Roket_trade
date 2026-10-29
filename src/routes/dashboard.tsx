@@ -30,6 +30,7 @@ import type { Tables } from "@/integrations/supabase/types";
 import { createPlatformStats } from "@/lib/platform-stats";
 import type { PlatformStats } from "@/lib/platform-stats";
 import { PAYMENT_VERIFICATION_EVENT } from "@/lib/payment-verification";
+import { HIGHEST_PLAN_RANK, isPlanUpgrade, planIndex } from "@/lib/plans";
 import { buildReferralLink } from "@/lib/referral";
 
 export const Route = createFileRoute("/dashboard")({
@@ -487,9 +488,9 @@ function AdsRewardCard({
         </button>
 
         <p className="mt-5 text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
-          Latest 5 Rewards
+          Latest 10 Rewards
         </p>
-        <ul className="mt-2 divide-y divide-gray-800">
+        <ul className="mt-2 max-h-[250px] divide-y divide-gray-800 overflow-y-auto">
           {earnings.length === 0 ? (
             <li className="py-3 text-xs text-muted-foreground">
               No rewards yet — watch your first ad.
@@ -585,9 +586,9 @@ function ReferralCard({
       </button>
 
       <p className="mt-5 text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
-        Latest 5 Referrals
+        Latest 10 Referrals
       </p>
-      <ul className="mt-2 divide-y divide-gray-800">
+      <ul className="mt-2 max-h-[250px] divide-y divide-gray-800 overflow-y-auto">
         {referrals.length === 0 ? (
           <li className="py-3 text-xs text-muted-foreground">No referrals yet.</li>
         ) : (
@@ -728,6 +729,7 @@ function UserControlCard({
   totalProfit,
   duration,
   kycVerified,
+  canUpgrade,
   onChangePassword,
   onEditPhone,
   onCancelPlan,
@@ -741,6 +743,8 @@ function UserControlCard({
   totalProfit: number;
   duration: string;
   kycVerified: boolean;
+  /** False on the top plan: there is nothing higher to buy. */
+  canUpgrade: boolean;
   onChangePassword: () => void;
   onEditPhone: () => void;
   onCancelPlan: () => void;
@@ -842,13 +846,19 @@ function UserControlCard({
       </div>
 
       <div className="mt-4 space-y-2">
-        <Link
-          to="/"
-          hash="pricing"
-          className="block rounded-xl bg-gradient-to-r from-emerald-400 to-cyan-400 px-3 py-2 text-center text-xs font-bold text-gray-950 shadow-[0_0_18px_rgba(52,211,153,0.3)] transition hover:brightness-110"
-        >
-          Upgrade Plan
-        </Link>
+        {canUpgrade ? (
+          <Link
+            to="/"
+            hash="pricing"
+            className="block rounded-xl bg-gradient-to-r from-emerald-400 to-cyan-400 px-3 py-2 text-center text-xs font-bold text-gray-950 shadow-[0_0_18px_rgba(52,211,153,0.3)] transition hover:brightness-110"
+          >
+            Upgrade Plan
+          </Link>
+        ) : (
+          <span className="block rounded-xl border border-gray-700 px-3 py-2 text-center text-xs font-semibold text-muted-foreground">
+            Highest Plan Active
+          </span>
+        )}
         <button
           type="button"
           onClick={onChangePassword}
@@ -1087,13 +1097,13 @@ function DashboardContent() {
           .eq("user_id", currentUser.id)
           .in("type", ["ad_earning", "welcome_bonus"])
           .order("created_at", { ascending: false })
-          .limit(5),
+          .limit(10),
         supabase
           .from("profiles")
           .select("id,full_name,created_at")
           .eq("referred_by", currentUser.id)
           .order("created_at", { ascending: false })
-          .limit(5),
+          .limit(10),
         supabase
           .from("transactions")
           .select("id,amount,created_at,status")
@@ -1403,7 +1413,7 @@ function DashboardContent() {
       .eq("user_id", userId)
       .in("type", ["ad_earning", "welcome_bonus"])
       .order("created_at", { ascending: false })
-      .limit(5);
+      .limit(10);
     if (data) setAdEarnings(data as AdEarning[]);
   };
 
@@ -1508,6 +1518,8 @@ function DashboardContent() {
   // admin plan change (or cancel) shows up here instead of a stale deposit.
   const planStartedAt = profile?.plan_started_at ?? null;
   const activePlanName = profile?.plan_name ?? null;
+  // Plans only move upwards — on the top plan there is no upgrade to offer.
+  const canUpgradePlan = isPlanUpgrade(planIndex(activePlanName), HIGHEST_PLAN_RANK);
   const investmentAmount = summary.activePlan?.amount ?? 0;
   const planStartedMs = planStartedAt ? new Date(planStartedAt).getTime() : Number.NaN;
   const planExpiresMs = profile?.plan_expires_at
@@ -2053,16 +2065,13 @@ function DashboardContent() {
                   <p className="text-xs uppercase tracking-widest text-muted-foreground">
                     Live Chart
                   </p>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    Live candlesticks · updates every 3s
-                  </p>
                 </div>
                 <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-emerald-400">
                   <span
                     className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400"
                     aria-hidden="true"
                   />
-                  Random Market
+                  Secret Market
                 </span>
               </div>
 
@@ -2099,6 +2108,7 @@ function DashboardContent() {
                 totalProfit={summary.dailyProfit}
                 duration={`${PLAN_TOTAL_DAYS} Days`}
                 kycVerified={kycVerified}
+                canUpgrade={canUpgradePlan}
                 onChangePassword={openPassword}
                 onEditPhone={openPhone}
                 onCancelPlan={requestCancelPlan}

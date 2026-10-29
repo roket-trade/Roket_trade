@@ -153,7 +153,7 @@ describe("Ads Rewards plan gating", () => {
     planState.plan = plan;
     render(<DashboardPage />);
 
-    expect(await screen.findByText("Latest 5 Rewards")).toBeInTheDocument();
+    expect(await screen.findByText("Latest 10 Rewards")).toBeInTheDocument();
     const card = adsCard();
     expect(within(card).queryByText(LOCK_COPY)).toBeNull();
     expect(within(card).queryByRole("link", { name: "Upgrade Plan" })).toBeNull();

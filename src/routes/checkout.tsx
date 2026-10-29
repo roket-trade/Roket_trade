@@ -1,11 +1,12 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
-import { useState } from "react";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { useEffect, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import { toast } from "sonner";
 import { z } from "zod";
 import { RequireAuth } from "@/components/RequireAuth";
 import { usePaymentVerification } from "@/components/PaymentVerificationProvider";
 import { supabase } from "@/integrations/supabase/client";
+import { fetchCurrentPlanIndex, isPlanUpgrade } from "@/lib/plans";
 
 const PLANS = {
   "1": { name: "Plan 1", deposit: 60, daily: 1 },
@@ -59,13 +60,44 @@ const money = (n: number) => n.toLocaleString("en-US", { style: "currency", curr
 function Checkout() {
   const { plan: planId } = Route.useSearch();
   const plan = PLANS[String(planId) as PlanId];
+  const navigate = useNavigate();
   const [net, setNet] = useState<Net>("BEP20");
   const [tx, setTx] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState(false);
+  // Set when the signed-in user already owns this plan (or a better one). The
+  // page redirects to the dashboard; this state keeps the checkout form closed
+  // in case the redirect cannot happen.
+  const [planBlocked, setPlanBlocked] = useState(false);
   const { startVerification } = usePaymentVerification();
   const address = NETWORKS[net].address;
+
+  // Plans only move upwards: buying the same plan again or downgrading is not
+  // allowed, so a deep link to a lower plan bounces back to the dashboard.
+  useEffect(() => {
+    let active = true;
+
+    const checkPlan = async () => {
+      const { data } = await supabase.auth.getUser();
+      const current = await fetchCurrentPlanIndex(data.user?.id);
+      if (!active || current === null || isPlanUpgrade(current, planId)) return;
+
+      setPlanBlocked(true);
+      toast.error(
+        current === planId
+          ? `You're already on ${plan.name}.`
+          : `You can only upgrade to a higher plan than ${plan.name}.`,
+      );
+      navigate({ to: "/dashboard", replace: true });
+    };
+
+    void checkPlan();
+
+    return () => {
+      active = false;
+    };
+  }, [navigate, plan.name, planId]);
 
   const copy = async () => {
     try {
@@ -87,6 +119,10 @@ function Checkout() {
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (planBlocked) {
+      toast.error("This plan isn't available to you — choose a higher plan.");
+      return;
+    }
     const parsed = txSchema.safeParse(tx);
     if (!parsed.success)
       return setError(parsed.error.issues[0]?.message ?? "Invalid transaction hash");
@@ -196,7 +232,30 @@ function Checkout() {
             </p>
           </section>
 
-          {done ? (
+          {planBlocked ? (
+            <section className="rounded-2xl border border-amber-500/40 bg-card p-8 text-center">
+              <h2 className="font-display text-2xl font-bold">Plan not available</h2>
+              <p className="mt-3 text-sm text-muted-foreground">
+                {plan.name} isn&apos;t available on your account — you can only upgrade to a higher
+                plan.
+              </p>
+              <div className="mt-6 flex flex-wrap justify-center gap-2">
+                <Link
+                  to="/dashboard"
+                  className="inline-block rounded-lg bg-brand px-6 py-3 font-display font-bold text-primary-foreground"
+                >
+                  Go to dashboard
+                </Link>
+                <Link
+                  to="/"
+                  hash="pricing"
+                  className="inline-block rounded-lg border border-primary px-6 py-3 font-display font-bold text-primary hover:bg-primary/10"
+                >
+                  See plans
+                </Link>
+              </div>
+            </section>
+          ) : done ? (
             <section className="rounded-2xl border border-primary bg-card p-8 text-center shadow-glow">
               <h2 className="font-display text-2xl font-bold">Payment submitted</h2>
               <p className="mt-3">

@@ -19,14 +19,14 @@ const steps: Step[] = [
     text: "Sign up in minutes, then verify your identity so your account and payouts stay secure.",
   },
   {
-    icon: Wallet,
-    title: "Deposit USDT",
-    text: "Fund your account with USDT on BEP20 or Solana. Every deposit is verified on-chain automatically.",
-  },
-  {
     icon: CreditCard,
     title: "Choose a Plan",
     text: "Pick Plan 1 through Plan 4 — $60 to $250 — and your daily profit starts as soon as the plan is active.",
+  },
+  {
+    icon: Wallet,
+    title: "Deposit USDT",
+    text: "Fund your chosen plan with USDT on BEP20 or Solana. Every deposit is verified on-chain automatically.",
   },
   {
     icon: TrendingUp,

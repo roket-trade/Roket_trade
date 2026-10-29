@@ -205,7 +205,8 @@ describe("Dashboard top summary cards", () => {
 
     // Live candlestick chart + platform-wide profit/loss stats.
     expect(screen.getByText("Live Chart")).toBeInTheDocument();
-    expect(screen.getByText("Random Market")).toBeInTheDocument();
+    expect(screen.getByText("Secret Market")).toBeInTheDocument();
+    expect(screen.queryByText(/Live candlesticks · updates every 3s/)).toBeNull();
     expect(
       screen.getByRole("img", { name: "Live Roket market candlestick chart" }),
     ).toBeInTheDocument();
@@ -244,7 +245,7 @@ describe("Dashboard top summary cards", () => {
     // Bottom 4-column grid.
     expect(screen.getByRole("heading", { name: "Ads Reward" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Watch Ads" })).toBeInTheDocument();
-    expect(screen.getByText("Latest 5 Rewards")).toBeInTheDocument();
+    expect(screen.getByText("Latest 10 Rewards")).toBeInTheDocument();
     expect(screen.getByText("+$0.10")).toBeInTheDocument();
 
     expect(screen.getByRole("heading", { name: "Referral" })).toBeInTheDocument();

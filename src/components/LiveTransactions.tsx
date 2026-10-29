@@ -249,7 +249,12 @@ export function LiveTransactions() {
                 <Icon action={r.action} />
               </span>
               <div className="min-w-0">
-                <p className="truncate font-semibold">{r.name}</p>
+                <p
+                  className="truncate font-semibold blur-[3px] select-none"
+                  aria-label="Hidden user"
+                >
+                  {r.name}
+                </p>
                 <p className="text-xs text-muted-foreground">{r.action}</p>
               </div>
               <div className="ml-auto text-right">

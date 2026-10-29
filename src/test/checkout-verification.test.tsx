@@ -16,6 +16,7 @@ vi.mock("@tanstack/react-router", () => ({
     return { ...options, useSearch: () => ({ plan: 2 }) };
   },
   Link: ({ children }: { children: ReactNode }) => <>{children}</>,
+  useNavigate: () => vi.fn(),
 }));
 
 vi.mock("@/components/RequireAuth", () => ({
@@ -36,7 +37,13 @@ vi.mock("@/integrations/supabase/client", () => ({
     auth: {
       getUser: () => Promise.resolve({ data: { user: { id: "user-1" } }, error: null }),
     },
-    from: () => ({ insert: insertMock }),
+    from: () => ({
+      insert: insertMock,
+      // No stored plan → the downgrade guard lets the checkout form through.
+      select: () => ({
+        eq: () => ({ maybeSingle: () => Promise.resolve({ data: null, error: null }) }),
+      }),
+    }),
   },
 }));
 

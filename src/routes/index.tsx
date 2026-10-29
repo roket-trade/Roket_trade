@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { CandleChart } from "@/components/CandleChart";
 import { LiveTransactions } from "@/components/LiveTransactions";
@@ -7,6 +8,7 @@ import { FAQ } from "@/components/FAQ";
 import { Footer } from "@/components/Footer";
 import { HeaderAuthNav } from "@/components/HeaderAuthNav";
 import { useAuth } from "@/components/AuthProvider";
+import { blockedPlanLabel, fetchCurrentPlanIndex, isPlanUpgrade } from "@/lib/plans";
 
 type Plan = {
   name: string;
@@ -83,6 +85,25 @@ function Check() {
 
 function Index() {
   const { user } = useAuth();
+  // Rank of the plan the user already owns (1-4). null = nothing to restrict.
+  const [currentPlan, setCurrentPlan] = useState<number | null>(null);
+
+  useEffect(() => {
+    let active = true;
+
+    if (!user?.id) {
+      setCurrentPlan(null);
+      return;
+    }
+
+    void fetchCurrentPlanIndex(user.id).then((rank) => {
+      if (active) setCurrentPlan(rank);
+    });
+
+    return () => {
+      active = false;
+    };
+  }, [user?.id]);
 
   return (
     <div className="min-h-screen">
@@ -134,62 +155,84 @@ function Index() {
           term.
         </p>
         <div className="mt-14 grid gap-6 sm:grid-cols-2 lg:grid-cols-4 lg:items-stretch">
-          {plans.map((p, i) => (
-            <div
-              key={p.name}
-              className={`relative flex h-full flex-col rounded-2xl border bg-card p-6 ${
-                p.popular ? "border-primary shadow-glow ring-1 ring-primary/40 lg:-mt-3" : ""
-              }`}
-            >
-              {p.popular && (
-                <span className="absolute -top-3 left-1/2 -translate-x-1/2 rounded-full bg-brand px-3 py-1 text-[11px] font-bold uppercase tracking-wider text-primary-foreground">
-                  Most Popular
-                </span>
-              )}
+          {plans.map((p, i) => {
+            const rank = i + 1;
+            const canChoose = isPlanUpgrade(currentPlan, rank);
+            return (
+              <div
+                key={p.name}
+                className={`relative flex h-full flex-col rounded-2xl border bg-card p-6 ${
+                  p.popular ? "border-primary shadow-glow ring-1 ring-primary/40 lg:-mt-3" : ""
+                }`}
+              >
+                {p.popular && (
+                  <span className="absolute -top-3 left-1/2 -translate-x-1/2 rounded-full bg-brand px-3 py-1 text-[11px] font-bold uppercase tracking-wider text-primary-foreground">
+                    Most Popular
+                  </span>
+                )}
 
-              <h3 className="text-xl font-bold">{p.name}</h3>
+                <h3 className="text-xl font-bold">{p.name}</h3>
 
-              {p.adsRewards && (
-                <span className="mt-3 inline-flex w-fit items-center rounded-full border border-emerald-400/40 bg-emerald-400/10 px-2.5 py-1 text-[11px] font-bold uppercase tracking-wider text-emerald-300">
-                  Unlock Ads Rewards
-                </span>
-              )}
+                {p.adsRewards && (
+                  <span className="mt-3 inline-flex w-fit items-center rounded-full border border-emerald-400/40 bg-emerald-400/10 px-2.5 py-1 text-[11px] font-bold uppercase tracking-wider text-emerald-300">
+                    Unlock Ads Rewards
+                  </span>
+                )}
 
-              <dl className="mt-5 space-y-3 text-sm">
-                <div className="flex items-baseline justify-between gap-3">
-                  <dt className="text-muted-foreground">Deposit</dt>
-                  <dd className="font-bold text-brand">{money(p.deposit)}</dd>
-                </div>
-                <div className="flex items-baseline justify-between gap-3">
-                  <dt className="text-muted-foreground">Daily Profit</dt>
-                  <dd className="font-bold text-primary">{money(p.daily)}</dd>
-                </div>
-                <div className="flex items-baseline justify-between gap-3">
-                  <dt className="text-muted-foreground">Total Profit</dt>
-                  <dd className="font-bold">{money(p.daily * 365)}</dd>
-                </div>
-                <div className="flex items-baseline justify-between gap-3">
-                  <dt className="text-muted-foreground">Duration</dt>
-                  <dd className="font-bold">365 Days</dd>
-                </div>
-              </dl>
+                <dl className="mt-5 space-y-3 text-sm">
+                  <div className="flex items-baseline justify-between gap-3">
+                    <dt className="text-muted-foreground">Deposit</dt>
+                    <dd className="font-bold text-brand">{money(p.deposit)}</dd>
+                  </div>
+                  <div className="flex items-baseline justify-between gap-3">
+                    <dt className="text-muted-foreground">Daily Profit</dt>
+                    <dd className="font-bold text-primary">{money(p.daily)}</dd>
+                  </div>
+                  <div className="flex items-baseline justify-between gap-3">
+                    <dt className="text-muted-foreground">Total Profit</dt>
+                    <dd className="font-bold">{money(p.daily * 365)}</dd>
+                  </div>
+                  <div className="flex items-baseline justify-between gap-3">
+                    <dt className="text-muted-foreground">Duration</dt>
+                    <dd className="font-bold">365 Days</dd>
+                  </div>
+                </dl>
 
-              <ul className="mb-6 mt-5 space-y-2 border-t pt-5 text-sm">
-                {(p.adsRewards ? [...planFeatures, "Watch Ads & Earn unlocked"] : planFeatures).map(
-                  (f) => (
+                <ul className="mb-6 mt-5 space-y-2 border-t pt-5 text-sm">
+                  {(p.adsRewards
+                    ? [...planFeatures, "Watch Ads & Earn unlocked"]
+                    : planFeatures
+                  ).map((f) => (
                     <li key={f} className="flex items-center gap-2">
                       <Check />
                       <span>{f}</span>
                     </li>
-                  ),
-                )}
-              </ul>
+                  ))}
+                </ul>
 
-              <Link to="/checkout" search={{ plan: i + 1 }} className={`${cta} mt-auto w-full`}>
-                Choose Plan
-              </Link>
-            </div>
-          ))}
+                {canChoose ? (
+                  <Link to="/checkout" search={{ plan: rank }} className={`${cta} mt-auto w-full`}>
+                    Choose Plan
+                  </Link>
+                ) : (
+                  <button
+                    type="button"
+                    disabled
+                    aria-disabled="true"
+                    data-testid={`plan-blocked-${rank}`}
+                    title={
+                      currentPlan === rank
+                        ? `You're already on ${p.name}`
+                        : `Upgrade Required — ${p.name} is lower than your current plan`
+                    }
+                    className="mt-auto w-full cursor-not-allowed rounded-lg border border-border bg-muted px-6 py-3 font-display font-bold text-muted-foreground"
+                  >
+                    {blockedPlanLabel(currentPlan, rank)}
+                  </button>
+                )}
+              </div>
+            );
+          })}
         </div>
       </section>
 

@@ -1,4 +1,12 @@
-import { BadgeCheck, Gift, Headset, PlayCircle, ShieldCheck, type LucideIcon } from "lucide-react";
+import {
+  BadgeCheck,
+  Gift,
+  Globe,
+  Headset,
+  PlayCircle,
+  ShieldCheck,
+  type LucideIcon,
+} from "lucide-react";
 
 type Feature = { icon: LucideIcon; title: string; text: string };
 
@@ -27,6 +35,11 @@ const features: Feature[] = [
     icon: Headset,
     title: "24/7 Live Chat Support",
     text: "Talk to a real person any time, day or night — or open a ticket straight from your dashboard.",
+  },
+  {
+    icon: Globe,
+    title: "Global Accessibility",
+    text: "Access your dashboard and withdraw your profits from anywhere in the world, 24/7.",
   },
 ];
 
