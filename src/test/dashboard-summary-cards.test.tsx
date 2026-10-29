@@ -170,6 +170,8 @@ describe("Dashboard top summary cards", () => {
     const totalCard = screen.getByText("Total Balance").closest("section") as HTMLElement;
     expect(within(totalCard).getByText("$21.65")).toBeInTheDocument();
     expect(within(totalCard).getByText("Main $9.50 · Extra $12.15")).toBeInTheDocument();
+    // The three rows below are lifetime totals, called out by a small label.
+    expect(within(totalCard).getByText("Lifetime")).toBeInTheDocument();
     expect(screen.getByText("+$9.50 ($4.50/day)")).toBeInTheDocument();
     expect(screen.getByText("+$0.15")).toBeInTheDocument();
     expect(screen.getByText("+$12.00")).toBeInTheDocument();

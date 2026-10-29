@@ -1008,7 +1008,8 @@ function DashboardContent() {
           .from("transactions")
           .select("amount,created_at,referred_user_id")
           .eq("user_id", currentUser.id)
-          .eq("type", "referral_bonus");
+          .eq("type", "referral_bonus")
+          .eq("status", "completed");
         if (!withLink.error) return (withLink.data ?? []) as ReferralBonusRow[];
 
         const missingColumn = withLink.error.code === "42703" || withLink.error.code === "PGRST204";
@@ -1024,7 +1025,8 @@ function DashboardContent() {
           .from("transactions")
           .select("amount,created_at")
           .eq("user_id", currentUser.id)
-          .eq("type", "referral_bonus");
+          .eq("type", "referral_bonus")
+          .eq("status", "completed");
         if (legacy.error) {
           console.error("[dashboard] referral bonus fetch failed", {
             message: legacy.error.message,
@@ -1047,12 +1049,16 @@ function DashboardContent() {
         referralRows,
         recentWithdrawalRows,
         dailyProfitRows,
+        welcomeBonusRows,
       ] = await Promise.all([
+        // Lifetime Ads Reward: every completed ad_earning row, never just the
+        // unspent part of the balance.
         supabase
           .from("transactions")
           .select("amount")
           .eq("user_id", currentUser.id)
-          .eq("type", "ad_earning"),
+          .eq("type", "ad_earning")
+          .eq("status", "completed"),
         loadReferralBonuses(),
         supabase
           .from("transactions")
@@ -1095,11 +1101,21 @@ function DashboardContent() {
           .eq("type", "withdrawal")
           .order("created_at", { ascending: false })
           .limit(5),
+        // Lifetime Daily Earning: every completed daily_profit row.
         supabase
           .from("transactions")
           .select("amount")
           .eq("user_id", currentUser.id)
-          .eq("type", "daily_profit"),
+          .eq("type", "daily_profit")
+          .eq("status", "completed"),
+        // The welcome bonus is a one-off referral reward, so the Referral Bonus
+        // row reports referral_bonus + welcome_bonus lifetime totals.
+        supabase
+          .from("transactions")
+          .select("amount")
+          .eq("user_id", currentUser.id)
+          .eq("type", "welcome_bonus")
+          .eq("status", "completed"),
       ]);
       if (id !== requestId.current) return;
 
@@ -1238,7 +1254,8 @@ function DashboardContent() {
 
       setSummary({
         adReward: round2(sumAmounts(adRows.data)),
-        referralBonus: round2(sumAmounts(referralBonuses)),
+        // Lifetime Referral Bonus = referral_bonus + welcome_bonus, completed only.
+        referralBonus: round2(sumAmounts(referralBonuses) + sumAmounts(welcomeBonusRows.data)),
         dailyProfit: dailyProfitTotal,
         totalWithdrawn: sumAmounts(withdrawals),
         totalDeposited,
@@ -1344,8 +1361,11 @@ function DashboardContent() {
   // Normalize so a stored "Verified" / " verified " still counts (the modal
   // normalizes the same way).
   const kycVerified = (kycStatus ?? "").trim().toLowerCase() === "verified";
-  const mainBalance = Number(profile?.main_balance ?? 0);
-  const extraBalance = Number(profile?.extra_balance ?? 0);
+  // Both balances are read straight from the profiles row; no other formula is
+  // allowed to nudge them. Rounding to cents keeps the headline exact when the
+  // two parts are added together.
+  const mainBalance = round2(Number(profile?.main_balance ?? 0));
+  const extraBalance = round2(Number(profile?.extra_balance ?? 0));
 
   useEffect(() => {
     if (!adOpen) return;
@@ -1465,20 +1485,22 @@ function DashboardContent() {
     }
   };
 
-  const totalBalance = mainBalance + extraBalance;
+  // Total Balance = main_balance + extra_balance, nothing else. Deposits and
+  // pending withdrawals are already reflected in those two columns, so they are
+  // never subtracted here.
+  const totalBalance = round2(mainBalance + extraBalance);
   // Available to withdraw is exactly the balance: main_balance + extra_balance.
   // Deposits are money spent on a plan and are never credited back, and a pending
   // request is debited from main_balance the moment it is created — so neither
   // deposits nor pending rows may be subtracted here a second time.
   const availableWithdrawal = totalBalance;
 
-  // Total Balance card shows money EARNED only — never deposits. Main is the
-  // sum of daily_profit transactions; Extra is ads + referral bonuses.
+  // The rows under the headline are LIFETIME totals (completed transactions),
+  // not the remaining balance — the balance can be spent, the lifetime totals
+  // cannot.
   const totalDailyProfit = summary.dailyProfit;
   const totalAdsReward = summary.adReward;
   const totalReferralBonus = summary.referralBonus;
-  const extraEarned = round2(totalAdsReward + totalReferralBonus);
-  const totalEarned = round2(totalDailyProfit + extraEarned);
 
   // Top-card derived values.
   // profiles is the source of truth for the plan window: deposit approvals, the
@@ -1905,9 +1927,12 @@ function DashboardContent() {
                   {money(Number.isFinite(totalBalance) ? totalBalance : 0)}
                 </p>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  Main {money(totalDailyProfit)} · Extra {money(extraEarned)}
+                  Main {money(mainBalance)} · Extra {money(extraBalance)}
                 </p>
-                <dl className="mt-4 space-y-2 border-t border-gray-800 pt-4 text-sm">
+                <p className="mt-4 mb-1 border-t border-gray-800 pt-4 text-[10px] uppercase tracking-wider text-muted-foreground">
+                  Lifetime
+                </p>
+                <dl className="space-y-2 text-sm">
                   <div className="flex items-center justify-between gap-3">
                     <dt className="text-muted-foreground">Daily Earning</dt>
                     <dd
