@@ -1149,12 +1149,6 @@ const openPlanModal = (user: AdminUser) => {
     setEditUser(user);
   };
 
-  // Available = Total Earned - Total Withdrawn, so the two inputs stay in step:
-  // editing one recalculates the other against the (fixed) withdrawn total.
-  const editWithdrawn = editUser
-    ? (aggregates[editUser.id] ?? EMPTY_AGGREGATE).totalWithdrawn
-    : 0;
-
   const changeBalance = (value: string) => {
     setEditDraft((draft) => ({ ...draft, balance: value }));
   };
