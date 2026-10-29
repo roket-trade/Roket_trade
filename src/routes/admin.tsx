@@ -1419,6 +1419,7 @@ const openPlanModal = (user: AdminUser) => {
                     <thead><tr className="border-b border-border/70 text-xs uppercase tracking-widest text-muted-foreground">
                       <th className="px-4 py-3">Email</th><th className="px-4 py-3">Name</th>
                       <th className="px-4 py-3">Balance</th>
+                      <th className="px-4 py-3">Net Earned</th>
                       <th className="px-4 py-3">Referrals</th><th className="px-4 py-3">KYC Status</th>
                       <th className="px-4 py-3">Plan Name</th><th className="px-4 py-3">Account Status</th>
                       <th className="px-4 py-3 text-right">Actions</th>

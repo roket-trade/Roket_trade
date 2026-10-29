@@ -445,6 +445,9 @@ describe("Admin user management tab", () => {
     expect(screen.getByText("Alice Able")).toBeInTheDocument();
     // A single Balance column: main_balance + extra_balance is the source of truth.
     expect(screen.getByRole("columnheader", { name: "Balance" })).toBeInTheDocument();
+    // The transaction aggregate (earned - withdrawn) has its own header, so the
+    // header row and the body rows line up.
+    expect(screen.getByRole("columnheader", { name: "Net Earned" })).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "Referrals" })).toBeInTheDocument();
     // The old split earned / available columns are gone.
     expect(screen.queryByRole("columnheader", { name: "Total Earned" })).not.toBeInTheDocument();
@@ -466,6 +469,11 @@ describe("Admin user management tab", () => {
 
     // A deposit is never shown as (or editable as) a balance again.
     expect(screen.queryByText("$500.00")).not.toBeInTheDocument();
+
+    // Every cell has a header: the header row and body rows must line up.
+    const usersTable = alice.closest("table") as HTMLTableElement;
+    const headerCount = within(usersTable).getAllByRole("columnheader").length;
+    expect(within(alice).getAllByRole("cell")).toHaveLength(headerCount);
   });
 
   it("filters users by email or name", async () => {
