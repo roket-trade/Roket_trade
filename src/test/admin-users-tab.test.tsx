@@ -192,6 +192,9 @@ const hoisted = vi.hoisted(() => {
 
   return {
     profiles,
+    // Pristine copy: admin.tsx now reads a profile back after writing it, so
+    // the fixture has to behave like the row would and be reset between tests.
+    initialProfiles: profiles.map((p) => ({ ...p })),
     aggregates,
     transactions,
     allTransactions,
@@ -277,6 +280,22 @@ vi.mock("@/integrations/supabase/client", () => {
       payload?: Record<string, unknown>;
       limited: boolean;
     } = { cols: initialCols, limited: false };
+
+    // Profile balance reads resolve at call time against the live fixture:
+    // admin.tsx re-reads the row it is about to diff against and again after
+    // the update, so a snapshot taken when the builder was created would answer
+    // with a stale balance.
+    const currentResult = (): Result => {
+      if (table === "profiles" && state.cols === "id,main_balance,extra_balance") {
+        const id = typeof state.value === "string" ? state.value : "user-1";
+        return {
+          data: hoisted.profiles.find((profile) => profile.id === id) ?? null,
+          error: null,
+        };
+      }
+      return result;
+    };
+
     const builder = {
       select: (cols?: string) => {
         state.cols = cols ?? "";
@@ -294,7 +313,7 @@ vi.mock("@/integrations/supabase/client", () => {
         state.limited = true;
         return builder;
       },
-      maybeSingle: () => Promise.resolve(result),
+      maybeSingle: () => Promise.resolve(currentResult()),
       update: (payload: Record<string, unknown>) => {
         state.payload = payload;
         return builder;
@@ -310,6 +329,14 @@ vi.mock("@/integrations/supabase/client", () => {
             column: state.column,
             value: state.value,
           });
+          // A profile write lands on the fixture, so reading the row back (which
+          // admin.tsx does to prove the value stuck) returns what was written.
+          // A blocked UPDATE (affectedRows false) stores nothing, exactly like
+          // the RLS-blocked write it models.
+          if (table === "profiles" && hoisted.affectedRows && typeof state.value === "string") {
+            const row = hoisted.profiles.find((profile) => profile.id === state.value);
+            if (row) Object.assign(row, state.payload);
+          }
           // `.select("id")` after the update is how admin.tsx proves the write
           // landed; an empty array models an RLS-blocked UPDATE.
           const affected = hoisted.affectedRows ? { id: state.value } : null;
@@ -349,7 +376,7 @@ vi.mock("@/integrations/supabase/client", () => {
           const rows = hoisted.transactions.filter((tx) => tx.user_id === state.value);
           return Promise.resolve({ data: rows, error: null }).then(onFulfilled, onRejected);
         }
-        return Promise.resolve(result).then(onFulfilled, onRejected);
+        return Promise.resolve(currentResult()).then(onFulfilled, onRejected);
       },
     };
     return builder;
@@ -442,6 +469,16 @@ const firstUpdate = () => {
   if (!update) throw new Error("expected the action to write a profile update");
   return update;
 };
+
+// admin.tsx reads a profile back after writing it, and the mocked write-through
+// below mutates these rows, so every test starts from the pristine fixture.
+beforeEach(() => {
+  hoisted.profiles.splice(
+    0,
+    hoisted.profiles.length,
+    ...hoisted.initialProfiles.map((profile) => ({ ...profile })),
+  );
+});
 
 async function openUsersTab() {
   render(<Admin />);
@@ -586,6 +623,55 @@ describe("Admin user management tab", () => {
     await waitFor(() =>
       expect(within(rowFor("alice@example.com")).getByText("$275.00")).toBeInTheDocument(),
     );
+  });
+
+  it("diffs a balance edit against the database, not the page snapshot", async () => {
+    await openUsersTab();
+    openActions("alice@example.com");
+    fireEvent.click(screen.getByRole("button", { name: "Edit Balances & KYC" }));
+
+    const dialog = await screen.findByRole("dialog");
+    const balance = within(dialog).getByLabelText("Balance") as HTMLInputElement;
+
+    // A credit (daily profit, referral bonus) landed after the page loaded, so
+    // the row is now 40 main + 10 extra = 50 in the database.
+    const alice = hoisted.profiles.find((profile) => profile.id === "user-1");
+    if (alice) alice.main_balance = 40;
+
+    fireEvent.change(balance, { target: { value: "60" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save changes" }));
+
+    await waitFor(() => expect(hoisted.updates).toHaveLength(1));
+    // 60 requested against the database's 50 → main_balance moves by +10 to 50,
+    // so the credit that arrived mid-edit is preserved instead of reverted.
+    expect(hoisted.updates[0]).toMatchObject({
+      table: "profiles",
+      payload: {
+        main_balance: 50,
+        is_admin: false,
+        kyc_status: "verified",
+      },
+      column: "id",
+      value: "user-1",
+    });
+    await waitFor(() =>
+      expect(within(rowFor("alice@example.com")).getByText("$60.00")).toBeInTheDocument(),
+    );
+  });
+
+  it("writes once when Save changes is clicked twice", async () => {
+    await openUsersTab();
+    openActions("alice@example.com");
+    fireEvent.click(screen.getByRole("button", { name: "Edit Balances & KYC" }));
+
+    const dialog = await screen.findByRole("dialog");
+    const save = within(dialog).getByRole("button", { name: "Save changes" });
+    fireEvent.click(save);
+    fireEvent.click(save);
+
+    await waitFor(() => expect(toast.success).toHaveBeenCalled());
+    // The second click must not queue a second read → diff → write cycle.
+    expect(hoisted.updates).toHaveLength(1);
   });
 
   it("holds an active account and reflects it in the table", async () => {
@@ -973,5 +1059,58 @@ describe("Admin withdrawal rejection", () => {
       ),
     ).toBe(true);
     await waitFor(() => expect(toast.success).toHaveBeenCalled());
+  });
+});
+
+/**
+ * The approve confirmation must state the real payout. It read
+ * `deposit_amount ?? amount`, and a withdrawal that stores `deposit_amount = 0`
+ * kept the 0 (nullish coalescing accepts 0), so a $50 payout was confirmed as
+ * "This marks $0.00 as paid out".
+ */
+describe("Admin withdrawal approval", () => {
+  const pendingWithdrawal = (depositAmount: number | null) => ({
+    id: "wd-1",
+    user_id: "user-1",
+    type: "withdrawal",
+    amount: -50,
+    deposit_amount: depositAmount,
+    plan_name: "Withdraw to BEP20",
+    network: "BEP20",
+    wallet_address: "0xabc",
+    tx_hash: "wd-1",
+    status: "pending",
+    created_at: "2026-02-06T00:00:00.000Z",
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    hoisted.updates.length = 0;
+    hoisted.isAdmin = true;
+    hoisted.affectedRows = true;
+    hoisted.primaryEmailError = null;
+    hoisted.aggregateRpcError = false;
+    hoisted.pendingWithdrawals.length = 0;
+  });
+
+  it("confirms with the real payout when the row stores deposit_amount = 0", async () => {
+    hoisted.pendingWithdrawals.push(pendingWithdrawal(0));
+    render(<Admin />);
+    fireEvent.click(await screen.findByRole("button", { name: /Pending Withdrawals/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Approve" }));
+
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText(/This marks \$50\.00 as paid out/)).toBeInTheDocument();
+    expect(within(dialog).queryByText(/\$0\.00/)).not.toBeInTheDocument();
+  });
+
+  it("confirms with the real payout when the row carries no deposit_amount", async () => {
+    hoisted.pendingWithdrawals.push(pendingWithdrawal(null));
+    render(<Admin />);
+    fireEvent.click(await screen.findByRole("button", { name: /Pending Withdrawals/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Approve" }));
+
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText(/This marks \$50\.00 as paid out/)).toBeInTheDocument();
   });
 });

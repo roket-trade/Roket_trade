@@ -286,6 +286,11 @@ const AD_SECONDS = 15;
 const PLAN_TOTAL_DAYS = 365;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+// How often an open dashboard re-reads the profile row. Admin edits (and the
+// daily-profit credits) land in the row directly, so the page has to look
+// again; a minute is short enough to feel live and cheap enough to leave on.
+const PROFILE_REFRESH_MS = 60_000;
+
 // Mirrors the rates used by public.distribute_daily_profits().
 const PLAN_DAILY_RATES: Record<string, number> = {
   "plan 1": 1,
@@ -949,10 +954,17 @@ function DashboardContent() {
   // Stable profile fetcher. It lives OUTSIDE the mount effect so the Retry
   // button can call it directly; the effect below only kicks off the first run.
   // requestId drops stale responses when Retry is clicked repeatedly.
-  const fetchProfile = useCallback(async () => {
+  //
+  // `silent` is the background-refresh mode: it must never flip the page into
+  // its error/empty state, because a transient network blip while polling would
+  // otherwise blank a dashboard that was working a second earlier.
+  const fetchProfile = useCallback(async (options?: { silent?: boolean }) => {
+    const silent = options?.silent === true;
     const id = ++requestId.current;
-    setRefreshingProfile(true);
-    setProfileError("");
+    if (!silent) {
+      setRefreshingProfile(true);
+      setProfileError("");
+    }
 
     try {
       const {
@@ -995,6 +1007,7 @@ function DashboardContent() {
           details: profileFetchError.details,
           hint: profileFetchError.hint,
         });
+        if (silent) return;
         setProfile(null);
         setProfileError(profileFetchError.message);
         return;
@@ -1008,6 +1021,7 @@ function DashboardContent() {
           userId: currentUser.id,
           hint: "Check the profiles SELECT policy (auth.uid() = id) and that the row exists.",
         });
+        if (silent) return;
         setProfileError(`No profile record is visible for your account (${currentUser.id}).`);
         return;
       }
@@ -1308,10 +1322,12 @@ function DashboardContent() {
     } catch (err) {
       if (id !== requestId.current) return;
       console.error("[dashboard] fetchProfile threw", err);
-      setProfileError(err instanceof Error ? err.message : "Couldn't load your profile.");
+      if (!silent) {
+        setProfileError(err instanceof Error ? err.message : "Couldn't load your profile.");
+      }
     } finally {
       if (id === requestId.current) {
-        setRefreshingProfile(false);
+        if (!silent) setRefreshingProfile(false);
         setLoading(false);
       }
     }
@@ -1319,6 +1335,26 @@ function DashboardContent() {
 
   useEffect(() => {
     void fetchProfile();
+  }, [fetchProfile]);
+
+  // An admin balance edit writes straight to the profiles row, so the page has
+  // to go and look again — it used to keep whatever it read at mount, which is
+  // how an admin's change stayed invisible for minutes. Refresh when the tab
+  // regains focus / becomes visible, and poll once a minute while it is open.
+  useEffect(() => {
+    const refresh = () => {
+      // A hidden tab has no one looking at it; wait for focus instead.
+      if (document.visibilityState === "hidden") return;
+      void fetchProfile({ silent: true });
+    };
+    const interval = window.setInterval(refresh, PROFILE_REFRESH_MS);
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", refresh);
+    };
   }, [fetchProfile]);
 
   // A verified deposit activates the plan server-side; refresh the dashboard as

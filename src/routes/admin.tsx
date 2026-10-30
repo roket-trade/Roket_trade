@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type MouseEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { toast } from "sonner";
 import { Loader2 } from "lucide-react";
@@ -134,6 +134,22 @@ const round2 = (n: number) => Math.round(n * 100) / 100;
 const asNumber = (value: unknown, fallback = 0) => {
   const n = Number(value);
   return Number.isFinite(n) ? n : fallback;
+};
+
+/**
+ * The money a withdrawal pays out, as a positive number.
+ *
+ * A withdrawal row stores the payout as the negative `amount` it debits, and
+ * some rows carry the figure in `deposit_amount` instead. Reading
+ * `deposit_amount ?? amount` looked correct until a row stored
+ * `deposit_amount = 0` — `0 ?? -50` keeps the 0, so the approve confirmation
+ * promised "This marks $0.00 as paid out" for a $50 payout. Prefer `amount`,
+ * and only fall back when it carries no value at all.
+ */
+const withdrawalAmount = (tx: Pick<Tx, "amount" | "deposit_amount">): number => {
+  const fromAmount = Math.abs(asNumber(tx.amount));
+  if (fromAmount > 0) return fromAmount;
+  return Math.abs(asNumber(tx.deposit_amount));
 };
 
 /**
@@ -531,6 +547,59 @@ async function updateProfile(
   }
   console.log(`[admin] ${action}: profile updated`, { userId, columns: Object.keys(patch) });
 }
+
+type BalanceRow = {
+  id: string;
+  main_balance: number | null;
+  extra_balance: number | null;
+};
+
+/**
+ * Read the profile as it exists in the database right now.
+ *
+ * The Users table is a snapshot taken at page load, so diffing a balance edit
+ * against it silently reverts anything that landed since (a daily profit, a
+ * referral bonus, a withdrawal request).
+ */
+async function fetchBalanceRow(userId: string): Promise<BalanceRow> {
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("id,main_balance,extra_balance")
+    .eq("id", userId)
+    .maybeSingle();
+
+  if (error) {
+    logSupabaseError("edit balance (profiles read)", error);
+    throw new Error(error.hint ? `${error.message} — ${error.hint}` : error.message);
+  }
+  if (!data) {
+    throw new Error("That user's profile is no longer visible. Refresh the page and try again.");
+  }
+  return data as BalanceRow;
+}
+
+// Two saves for the same user must not interleave their read → diff → write
+// cycle. Each write used to diff against the row cached when its modal opened,
+// so an overlapping save wrote the older base back and dropped the other
+// save's change (the classic lost update).
+const profileWriteQueues = new Map<string, Promise<unknown>>();
+
+function enqueueProfileWrite<T>(userId: string, task: () => Promise<T>): Promise<T> {
+  const previous = profileWriteQueues.get(userId) ?? Promise.resolve();
+  // Run whether the previous write resolved or rejected: one failed save must
+  // not wedge every later save for that user.
+  const run = previous.then(task, task);
+  const tail = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  profileWriteQueues.set(userId, tail);
+  void tail.then(() => {
+    if (profileWriteQueues.get(userId) === tail) profileWriteQueues.delete(userId);
+  });
+  return run;
+}
+
 function Admin() {
   return (
     <RequireAdmin>
@@ -571,6 +640,10 @@ function AdminContent() {
     top: number;
     left: number;
   } | null>(null);
+  // Guards the Edit modal against a second save landing while the first is
+  // still writing: two saves used to run the same read → diff → write with the
+  // same base and drop one of them.
+  const savingEditsRef = useRef(false);
   // Transaction history modal.
   const [txUser, setTxUser] = useState<AdminUser | null>(null);
   const [txRows, setTxRows] = useState<Tx[]>([]);
@@ -1175,8 +1248,10 @@ const openPlanModal = (user: AdminUser) => {
 
   const saveEdits = async () => {
     if (!editUser) return;
+    if (savingEditsRef.current) return;
     const target = editUser;
     const agg = aggregates[target.id];
+    savingEditsRef.current = true;
     setBusyUserId(target.id);
     try {
       if (!agg) {
@@ -1190,29 +1265,61 @@ const openPlanModal = (user: AdminUser) => {
       if (target.id === adminId && !editDraft.isAdmin) {
         throw new Error("You can't remove your own admin access.");
       }
+      const isAdmin = editDraft.isAdmin;
+      const kyc = editDraft.kyc;
 
-      const oldBalance = Number(target.main_balance ?? 0) + Number(target.extra_balance ?? 0);
-      const delta = round2(balance - oldBalance);
-      const nextMain = round2(Number(target.main_balance ?? 0) + delta);
+      // Await the write inside a per-user queue, and diff against the balance
+      // as it is in the database right now rather than the snapshot the modal
+      // opened with. Both matter: an unawaited/fire-and-forget write shows the
+      // admin a success the user never sees, and a stale base silently undoes
+      // anything that landed between page load and this save.
+      const saved = await enqueueProfileWrite(target.id, async () => {
+        const fresh = await fetchBalanceRow(target.id);
+        const freshMain = asNumber(fresh.main_balance);
+        const freshExtra = asNumber(fresh.extra_balance);
+        const freshTotal = round2(freshMain + freshExtra);
+        // The single Balance field is the user's whole balance (main + extra),
+        // so the difference is folded into main_balance exactly as typed.
+        const nextMain = round2(freshMain + round2(balance - freshTotal));
 
-      const patch = {
-        main_balance: nextMain,
-        is_admin: editDraft.isAdmin,
-        kyc_status: editDraft.kyc,
-      };
+        await updateProfile(
+          target.id,
+          { main_balance: nextMain, is_admin: isAdmin, kyc_status: kyc },
+          "edit balance/KYC",
+        );
 
-      await updateProfile(target.id, patch, "edit balance/KYC");
+        // Read the row back so a policy/replication surprise becomes a visible
+        // error instead of a save the admin believes in but the user never
+        // sees. updateProfile already proves the UPDATE hit a row; this proves
+        // the value that row now holds.
+        const settled = await fetchBalanceRow(target.id);
+        const settledMain = asNumber(settled.main_balance);
+        const settledTotal = round2(settledMain + asNumber(settled.extra_balance));
+        if (Math.abs(settledTotal - balance) >= 0.01) {
+          console.error("[admin] edit balance: stored balance differs from the request", {
+            userId: target.id,
+            requested: balance,
+            stored: settledTotal,
+            hint: "Another writer updated this profile at the same time.",
+          });
+        }
+        return { mainBalance: settledMain, extraBalance: asNumber(settled.extra_balance) };
+      });
 
       patchUser(target.id, {
-        main_balance: nextMain,
-        is_admin: editDraft.isAdmin,
-        kyc_status: editDraft.kyc,
+        main_balance: saved.mainBalance,
+        is_admin: isAdmin,
+        kyc_status: kyc,
       });
       setEditUser(null);
-      toast.success(`Saved changes for ${label(target)}.`);
+      toast.success(
+        `Saved changes for ${label(target)} — balance ${money(round2(saved.mainBalance + saved.extraBalance))}.`,
+      );
     } catch (err) {
+      console.error("[admin] save edits failed:", err);
       toast.error(err instanceof Error ? err.message : "Couldn't save the changes.");
     } finally {
+      savingEditsRef.current = false;
       setBusyUserId(null);
     }
   };
@@ -1498,11 +1605,11 @@ const openPlanModal = (user: AdminUser) => {
                     {withdrawals.map((tx) => (
                       <tr key={tx.id} className="border-b border-border/40 last:border-0">
                         <td className="px-4 py-3 font-medium">{tx.user_id ? emails[tx.user_id] ?? short(tx.user_id, 10) : "—"}</td>
-                        <td className="px-4 py-3 font-semibold text-primary">{money(Math.abs(Number(tx.amount)))}</td>
+                        <td className="px-4 py-3 font-semibold text-primary">{money(withdrawalAmount(tx))}</td>
                         <td className="max-w-[260px] truncate px-4 py-3 font-mono text-xs" title={tx.wallet_address ?? ""}>{tx.wallet_address ?? "—"}</td>
                         <td className="px-4 py-3"><div className="flex justify-end gap-2">
-                          <button type="button" disabled={busyId === tx.id} onClick={() => setConfirmAction({ title: "Approve this withdrawal?", message: `This marks ${money(Math.abs(Number(tx.deposit_amount ?? tx.amount)))} as paid out. Make sure the transfer to ${tx.wallet_address ?? "the user's wallet"} was sent.`, confirmLabel: "Yes, approve withdrawal", onConfirm: () => approveWithdrawal(tx) })} className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-emerald-500 disabled:opacity-50">{busyId === tx.id ? "…" : "Approve"}</button>
-                          <button type="button" disabled={busyId === tx.id} onClick={() => setConfirmAction({ title: "Reject this withdrawal?", message: `The ${money(Math.abs(Number(tx.amount)))} will be refunded and the user's 7-day cooldown cleared.`, confirmLabel: "Yes, reject + refund", tone: "danger", onConfirm: () => rejectWithdrawal(tx) })} className="rounded-lg bg-destructive/90 px-3 py-1.5 text-xs font-bold text-white hover:bg-destructive disabled:opacity-50">Reject + Refund</button>
+                          <button type="button" disabled={busyId === tx.id} onClick={() => setConfirmAction({ title: "Approve this withdrawal?", message: `This marks ${money(withdrawalAmount(tx))} as paid out. Make sure the transfer to ${tx.wallet_address ?? "the user's wallet"} was sent.`, confirmLabel: "Yes, approve withdrawal", onConfirm: () => approveWithdrawal(tx) })} className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-emerald-500 disabled:opacity-50">{busyId === tx.id ? "…" : "Approve"}</button>
+                          <button type="button" disabled={busyId === tx.id} onClick={() => setConfirmAction({ title: "Reject this withdrawal?", message: `The ${money(withdrawalAmount(tx))} will be refunded and the user's 7-day cooldown cleared.`, confirmLabel: "Yes, reject + refund", tone: "danger", onConfirm: () => rejectWithdrawal(tx) })} className="rounded-lg bg-destructive/90 px-3 py-1.5 text-xs font-bold text-white hover:bg-destructive disabled:opacity-50">Reject + Refund</button>
                         </div></td>
                       </tr>
                     ))}

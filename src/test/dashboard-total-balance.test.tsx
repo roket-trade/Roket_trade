@@ -1,5 +1,5 @@
 import type { ComponentType, ReactNode } from "react";
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import "@/routes/dashboard";
@@ -183,5 +183,59 @@ describe("Dashboard Total Balance card", () => {
 
     expect(within(card).queryByText(/999/)).toBeNull();
     expect(within(card).queryByText(/500/)).toBeNull();
+  });
+});
+
+/**
+ * An admin balance edit writes the profiles row directly, so an open dashboard
+ * has to go and look again. It used to read the row once at mount, which is how
+ * a saved $60.00 balance stayed on screen as $2.00 until the user reloaded.
+ */
+describe("Dashboard profile refresh", () => {
+  const original = {
+    main_balance: mockProfile.main_balance,
+    extra_balance: mockProfile.extra_balance,
+  };
+
+  afterEach(() => {
+    mockProfile.main_balance = original.main_balance;
+    mockProfile.extra_balance = original.extra_balance;
+  });
+
+  const totalBalanceCard = async () => {
+    const label = await screen.findByText("Total Balance");
+    return label.closest("section") as HTMLElement;
+  };
+
+  it("re-reads the profile when the window regains focus", async () => {
+    vi.spyOn(Math, "random").mockReturnValue(0.5);
+    render(<DashboardPage />);
+    expect(await within(await totalBalanceCard()).findByText("$127.35")).toBeInTheDocument();
+
+    // The admin saved the new balance while the user was in another tab.
+    mockProfile.main_balance = 60;
+    mockProfile.extra_balance = 0;
+
+    fireEvent(window, new Event("focus"));
+
+    expect(await within(await totalBalanceCard()).findByText("$60.00")).toBeInTheDocument();
+  });
+
+  it("polls the profile every 60 seconds while the page is open", async () => {
+    const setIntervalSpy = vi.spyOn(window, "setInterval");
+    vi.spyOn(Math, "random").mockReturnValue(0.5);
+    render(<DashboardPage />);
+    expect(await within(await totalBalanceCard()).findByText("$127.35")).toBeInTheDocument();
+
+    const poll = setIntervalSpy.mock.calls.find(([, delay]) => delay === 60_000);
+    expect(poll).toBeDefined();
+
+    mockProfile.main_balance = 60;
+    mockProfile.extra_balance = 0;
+    await act(async () => {
+      (poll?.[0] as () => void)();
+    });
+
+    expect(await within(await totalBalanceCard()).findByText("$60.00")).toBeInTheDocument();
   });
 });
